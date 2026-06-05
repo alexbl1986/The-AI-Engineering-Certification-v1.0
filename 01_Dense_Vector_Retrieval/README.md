@@ -1,15 +1,11 @@
-<p align = "center" draggable="false" ><img src="https://github.com/AI-Maker-Space/LLM-Dev-101/assets/37101144/d1343317-fa2f-41e1-8af1-1dbb18399719"
-     width="200px"
-     height="auto"/>
-</p>
-
-<h1 align="center" id="heading">Session 1: Dense Vector Retrieval</h1>
+# Session 1: Dense Vector Retrieval
 
 ### [Quicklinks]()
 
-| 📰 Module Sheet                                                                 | ⏺️ Recording | 🖼️ Slides | 👨‍💻 Repo       | 📝 Homework | 📁 Feedback |
-| :------------------------------------------------------------------------------- | :----------- | :-------- | :------------ | :---------- | :---------- |
-| [Dense Vector Retrieval](../00_Docs/Modules/01_Dense_Vector_Retrieval/README.md) |[Recording!](https://us02web.zoom.us/rec/share/sHWvo0Nd1aI0SEhKecOLEX9kFGVJJAdYfsKiuTmm8t85W48Z2lnjpnzTy8jAd8R5.PwuqibGwAZhvDd8c) <br> passcode: `C62n^@Q!`| [Session 1 Slides](https://canva.link/htfqf8i39yejyhn) | You are here! | [Session 1 Assignment](https://forms.gle/Z9qskfVaAvPjn6gz8) | [Feedback 6/2](https://forms.gle/21a2uoL9DVZPwgJP6) |
+
+| 📰 Module Sheet                                                                  | ⏺️ Recording                                                                                                                                           | 🖼️ Slides                                             | 👨‍💻 Repo    | 📝 Homework                                                 | 📁 Feedback                                         |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ | ------------- | ----------------------------------------------------------- | --------------------------------------------------- |
+| [Dense Vector Retrieval](../00_Docs/Modules/01_Dense_Vector_Retrieval/README.md) | [Recording!](https://us02web.zoom.us/rec/share/sHWvo0Nd1aI0SEhKecOLEX9kFGVJJAdYfsKiuTmm8t85W48Z2lnjpnzTy8jAd8R5.PwuqibGwAZhvDd8c) passcode: `C62n^@Q!` | [Session 1 Slides](https://canva.link/htfqf8i39yejyhn) | You are here! | [Session 1 Assignment](https://forms.gle/Z9qskfVaAvPjn6gz8) | [Feedback 6/2](https://forms.gle/21a2uoL9DVZPwgJP6) |
 
 
 ## 🏗️ How AIM Does Assignments
@@ -19,9 +15,7 @@
 Each assignment will have a few of the following categories of exercises:
 
 - ❓ **Questions** - these will be questions that you will be expected to gather the answer to. These can appear as general questions, or questions meant to spark a discussion in your breakout rooms.
-
 - 🏗️ **Activities** - these will be work or coding activities meant to reinforce specific concepts or theory components.
-
 - 🚧 **Advanced Builds (optional)** - Take on a challenge. These builds require you to create something with minimal guidance outside of the documentation.
 
 ## Main Assignment
@@ -69,6 +63,9 @@ Why is cosine similarity useful for dense vector retrieval?
 
 ##### ✅ Answer:
 
+Cosine similarity is useful for dense vector retrieval because we know that vectors with similar angles have similar textual meaning regardless of their length, and if we run cosine similarity between a prompt (in embedded form) and parts [chunks] of a reference document (also in embedded form), we can find this way only the parts of the document which should have the most similar meaning, while normalizing the short question with the much longer parts of the document.
+The cosine gives a clean and bounded score (between -1 and 1), which means its easy to rank the retrieved vectors. This is all provided that the embedding was done well. Also, when vectors are normalized to length 1 before the operation, the Cosine similarity becomes very efficient computationally, (simple dot product, multiply and add, without square roots).
+
 ---
 
 ## 🏗️ Activity #2: Build the Vector RAG Pipeline
@@ -88,17 +85,28 @@ Why is metadata important for a RAG application?
 
 ##### ✅ Answer:
 
+Metadata is important for rag applications because embedded chunks for documents don't hold information like recency (the date of the document), version numbers, document page numbers, etc. This means, that once you augment your prompt, without metadata you can't cite sources or filter out data that might have similar meaning to the query, but is outdated or irrelevant to the topic. Another important aspect is permissions. Some data shouldn't be available to users depending on their clearance. By attaching metadata to embedded chunks, you can have control over what users are allowed to retrieve. If RAG uses a metadata filter to narrow down to the chunks that are current, on-topic, and permitted, and then runs cosine similarity, the most meaningful matches within that filtered set can be found.
+
 #### ❓Question #3
 
 What tradeoff do we make when choosing chunk size and chunk overlap?
 
 ##### ✅ Answer:
 
+When choosing chunk size, a large chunk means that even though it will more likely hold relevant contextual information to the query, it will also hold much irrelevant information, and when embedding it, it might average out in vector similarity, and get ranked low. Also, it will inflate the context window. On the other hand, a small chunk might be too small to have more than a single narrow idea, but it could potentially point to a similar direction to the query, resulting in a a highly ranked vector, but not enough context to stand on its own, rendering it useless.  When choosing chunk overlap, if the overlap is too small, ideas might get cut-off at the  beginning or end of chunks, losing valuable context. but if the overlap is too big, then it introduces redundancy. The same text will be introduced multiple times, costing with inefficient context window.
+
 #### ❓Question #4
 
 What does a similarity score help you understand, and what does it not prove by itself?
 
 ##### ✅ Answer:
+
+A similarity score helps me understand whether two texts have similar textual meaning. A high score means their embedded vector representations are angularly close. But it doesn't prove the following:
+
+1. It doesn't check if a retrieved chunk has true, false, accurate or recent information.
+2. It can't check if retrieved chunks with high scores have contradictory information.
+3. A similarity score doesn't take into account model biases or blind spots. Also, it depends on the model what is considered a high score.
+4. A similarity score doesn't take metadata into account, which we already know is crucial for relevance of retrieved chunks.
 
 ---
 
@@ -130,13 +138,9 @@ Document what changed and whether retrieval improved.
 
 ##### Settings Changed:
 
--
+- 
 
 ##### Results:
-
-1.
-2.
-3.
 
 ---
 
@@ -172,9 +176,9 @@ git pull upstream main
 git push origin main
 ```
 
-2. Start Cursor from the `01_Dense_Vector_Retrieval` folder.
-3. Complete the notebook.
-4. Answer the questions in this `README.md`.
-5. Add, commit, and push your modified work to your origin repository.
+1. Start Cursor from the `01_Dense_Vector_Retrieval` folder.
+2. Complete the notebook.
+3. Answer the questions in this `README.md`.
+4. Add, commit, and push your modified work to your origin repository.
 
 When submitting your homework, provide the GitHub URL to your AIE9 repo.
