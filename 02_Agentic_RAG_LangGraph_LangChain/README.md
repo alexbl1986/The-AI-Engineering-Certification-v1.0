@@ -9,7 +9,7 @@
 
 | 📰 Session Sheet | ⏺️ Recording | 🖼️ Slides | 👨‍💻 Repo | 📝 Homework | 📁 Feedback |
 |:-----------------|:-------------|:----------|:----------|:------------|:------------|
-| [The Agent Loop](../00_Docs/Session_Sheets/02_The_Agent_Loop.md) | | | You are here! | | |
+| [Session 2: Agents](https://github.com/AI-Maker-Space/The-AI-Engineering-Certification-v1.0/tree/main/00_Docs/Modules/02_Agentic_RAG_From_Scratch) |[Recording!](https://us02web.zoom.us/rec/share/QY5jO23FGTCX3yYT_RkogG_aq_BISzHfzN7CcVHP3qeliXKqwBnraUQSNlHtkRUD.OwX79Wfmk0hdy087) <br> passcode: `3fAh&+PM`| [Session 2 Slides](https://canva.link/l06gfshgqhv8svl) | You are here! | [Session 2 Assignment](https://forms.gle/9L3kTpvfJzFoAEDn8) | [Feedback 6/4](https://forms.gle/9L3kTpvfJzFoAEDn8) |
 
 ## Main Assignment
 
