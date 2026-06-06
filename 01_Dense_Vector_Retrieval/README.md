@@ -123,6 +123,26 @@ For the vibe check queries, did the retrieved context seem relevant before gener
 
 ##### ✅ Answer:
 
+For query 1, "What preventive care is recommended for cats?":
+- Sources 1 and 4 are relevant, as they give concrete examples of preventive care routines.
+- Source 2 isn't relevant because it discusses preventive care in general, but doesn't provide actual ways to execute preventive care. Source 3 isn't relevant because its a chunk containing references of the original document (a reference to references) without actual context. 
+
+For query 2, "What symptoms should make me call a veterinarian?":
+- Source 1 is relevant,as it mentions symptoms of ilnesses that a veterinarian should instruct a cat owner not to ignore. 
+- Source 2 doesn't seem to be relevant, as it doen't answer the query but discusses why cat owner are sometimes reluctant to take senior cats to vets. (The generation decided that the mentioned symptoms "reduced jumping or climbing" are a reason to call a vet but the source doesn't state that.)
+- Source 3 is relevant as its actually the next sequential chunk after source 1, and it directly explains why the symptoms mentioned in source 1 are serious.
+- Source 4 seems to be relevant because it mentions "Changes in demeanor, activity level, and behavior are additionally key to note
+and trend over time.", (The generation for some reason decided not to use it as a source, maybe because some of these symptoms were already mentioned in source 1)
+
+For query 3, "What should I know about feeding a healthy adult cat?":
+- Source 1 seems relevant as it discusses in how to measure the caloric needs of cats. 
+- Source 2 is relevant because it instructs what nutrition any cat should consume, including healthy adult cats.
+- Source 3 seems relevant as it discusses young energy requirements and feeding amounts for young adult cats, which should fall to the category of "healthy adult cats".
+- Source 4 shouldn't be relevant as it discusses feeding sick cats (patients) or kittens, despite that the generated answer decided to use it as a source 
+
+For query 4, "Can my cat help me file my taxes?":
+- As expected, none of the 4 chunks had could possibly have any relevant context. The llm also correctly reasoned that neither of the chunks answered this question. 
+
 ---
 
 ## 🏗️ Activity #4: Tune Retrieval
@@ -138,9 +158,16 @@ Document what changed and whether retrieval improved.
 
 ##### Settings Changed:
 
-- 
+- Setting changed: Changed chunk size to 1500
+
 
 ##### Results:
+
+For the query "What preventive care is recommended for cats?"
+
+- Before: Used only sources 1 and 4, sources 2 and 3 were irrelevant. I suspected that since sources 2, and 3 had context too narrow to be useful, by increasing the chunk size we can get a better chance for a chunk not only to have similar textual meaning, but also hold more relevant context. 
+- After: All 4 sources had relevant context to answer the query and were used by the generated answer. 
+- Did retrieval improve? Why or why not? The retrieval improved as now all 4 chunks were used as sources, and had much more speficic answers to the query. Previously as suspected, the retrieved chunks were too short to have enough context to directly answer the query. 
 
 ---
 
