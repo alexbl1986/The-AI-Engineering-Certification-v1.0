@@ -14,6 +14,8 @@ The graded work is Jupyter notebooks plus written answers in each session's `REA
 
 Exception: the learner owns this fork and may explicitly ask you to write/insert/refactor code (e.g. "go ahead and add this cell"). Honor explicit requests, but don't pre-emptively solve assignments.
 
+**Approval before edits:** Never modify a file without first describing the specific change (which file, what's added/removed/altered) and getting my explicit approval. Proposing is fine; editing without sign-off is not.
+
 ## Per-session structure
 
 Every session folder is an **independent uv project** — do not look for a repo-root environment. A session contains:
