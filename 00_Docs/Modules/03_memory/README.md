@@ -6,6 +6,7 @@
 - Understand short vs. long term memory in agentic systems and how to manage them
 - Learn the two primary methods for agents to write memories: in the hot path (e.g., during runtime) and in the background
 - Visualize, debug, and interact with your agent applications
+- Understand why knowledge graphs add value to memory
 
 🧰 **New Tools**
 - Visualization, Interaction, and Debugging: [LangSmith Studio](https://docs.langchain.com/langsmith/studio)
@@ -15,6 +16,9 @@
    
 ## 📜 Recommended Reading
 1. [Memory Overview](https://docs.langchain.com/oss/python/concepts/memory), by LangGraph
+2. [GraphRAG: Unlocking LLMs on Complex Data](https://microsoft.github.io/graphrag/) — Microsoft's GraphRAG documentation, the canonical reference.
+3. [From Local to Global: A Graph RAG Approach to Query-Focused Summarization (2024)](https://arxiv.org/abs/2404.16130) — The original GraphRAG paper by Edge et al.
+4. [Knowledge Graphs (Stanford CS520, 2022)](https://cs520.stanford.edu/) — A good primer if "knowledge graph" feels abstract.
 
 # **🗺️ Overview**
 
@@ -135,6 +139,115 @@ Background processing, on the other hand, avoids runtime latency impacts but res
   <img src="hot_path_vs_background.jpg" width="50%" />
 </p>
 
+## 🏗️ Knowledge Graph Memory
+In this module, we’re also introducing a more advanced memory technique: knowledge graphs.
+
+The idea is simple:
+
+1. Use an LLM to extract key entities and relationships from a document.
+2. Store those entities as a graph: a network of connected nodes and edges.
+3. When answering a question, retrieve context using both vector similarity and graph traversal.
+4. Let the graph surface connections that vector search might miss.
+
+In other words, vector search helps us find relevant chunks, while the knowledge graph helps us understand how the pieces are connected.
+
+---
+
+### 🕸️ Knowledge Graphs
+A knowledge graph is a network of entities connected by relationships. At its simplest it's an adjacency list:
+
+```python
+graph = {
+    "Acme Corp": {"launched": ["SmartDesk Pro"], "operates_in": ["Europe"]},
+    "SmartDesk Pro": {"launched_by": ["Acme Corp"], "starting_price": ["$499"]},
+}
+```
+
+Each entity is a node. Each relation is an edge. The graph encodes *structure* that the text itself doesn't make explicit — you have to read across paragraphs, across pages, sometimes across documents.
+
+**Why is this useful for retrieval?**
+
+When a user asks "What did Acme Corp say about SmartDesk Pro?", dense retrieval might find chunks mentioning both names. But if they're in different chunks with no semantic overlap, the retriever misses them. The graph knows they're connected — so it can expand the search to include any chunk that mentions either entity.
+
+
+---
+
+### 🔢 Entity Extraction
+
+The first step in building a knowledge graph is extracting entities and relations from the text. An entity is any named thing — a person, company, metric, concept. A relation connects two entities.
+
+Example from a product update:
+
+> "Acme Corp launched SmartDesk Pro in Europe with a starting price of $499."
+
+Entities: `Acme Corp`, `SmartDesk Pro`, `Europe`, `$499`
+
+Relations: `(Acme Corp) —launched→ (SmartDesk Pro)`, `(SmartDesk Pro) —available_in→ (Europe)`
+
+We use the LLM to extract these. The prompt asks it to return structured data:
+
+```python
+prompt = """
+Extract all entities and their relationships from this text.
+Return as JSON: [{"entity": "...", "relation": "...", "target": "..."}]
+Text: {chunk}
+"""
+```
+
+The LLM does the heavy lifting — pattern matching, disambiguation, inference. The code just stores what it returns.
+
+**Why not use a traditional NER model?** You could (spaCy, BERT-NER), but for this module we want to keep things simple and show that the same LLM you've been using all semester can do entity extraction too. In production, many teams combine both: an NER model for entities, an LLM for relations.
+
+---
+
+### 🧭 Graph Traversal
+
+The key operation on a knowledge graph is **traversal** — following edges from one node to another.
+
+For retrieval, we use BFS (breadth-first search) with a hop limit:
+
+1. Start at the query entities (extracted from the user's question).
+2. Expand to all directly connected entities (one hop).
+3. If we need more context, expand further (two hops, three hops...).
+4. Collect all chunks that mention any entity in our traversal.
+
+The hop limit matters: too many hops and you flood the context with irrelevant material; too few and you miss important connections.
+
+---
+
+### 🔬 Hybrid Retrieval
+
+Hybrid retrieval combines two axes:
+
+|                      | Dense retrieval (Module 02)                               | Graph-augmented retrieval                       |
+| -------------------- | --------------------------------------------------------- | ----------------------------------------------- |
+| Finds chunks that... | are semantically similar to the query                     | mention entities related to the query           |
+| Works well for...    | direct questions ("What is revenue?")                     | multi-hop questions ("How does X relate to Y?") |
+| Fails when...        | entities are in different chunks with no semantic overlap | entity extraction misses key relationships      |
+
+The hybrid approach:
+
+1. **Vector search** — find the top-k semantically similar chunks (fast, broad).
+2. **Entity extraction from query** — identify what entities the user is asking about.
+3. **Graph traversal** — expand to related entities within N hops.
+4. **Combine contexts** — merge vector-search results with graph-expanded context.
+5. **Generate answer** — the LLM sees both sources and produces a more complete response.
+
+This is the same pattern as Module 06's hybrid search (BM25 + dense), but with graphs instead of keywords.
+
+---
+
+### ❓ Common gotchas
+
+* **Entity extraction quality depends on the LLM.** If the model hallucinates entities or misses important ones, the graph will be wrong and retrieval will suffer. This is why Module 07 (Synthetic Data Generation) matters — you need evaluation data to measure whether extraction is working.
+* **Graph traversal can flood context with noise.** A hop limit of 2–3 is usually right; beyond that you're pulling in loosely related material that dilutes the answer.
+* **Not every document benefits from GraphRAG.** If your corpus has few entities or simple structure (e.g., a single-page FAQ), dense retrieval alone will do fine. GraphRAG shines when there are many interconnected entities across multiple pages.
+* **Entity extraction is expensive at scale.** Each chunk requires an LLM call to extract entities. For a 100-page document with ~50 chunks, that's ~30 seconds of API calls (one per chunk). For a 10,000-page corpus, you'd need batching or async.
+* **The graph doesn't replace retrieval — it augments it.** Graph traversal finds related entities; vector retrieval finds semantically similar chunks. You still need both.
+
+
+
+
 ## Memory Isn't New—It's Context Engineering
 
 It's going to feel a lot like we're talking about systems we already know about; e.g., 
@@ -162,4 +275,6 @@ Memory implementation requires constant trade-offs; e.g.,
 When you're talking about memory, you must understand what moves the needle for the user. It's not about implementing all the memory types—it's about understanding which memories matter for your specific application.
 
 We believe that memory will be a defining topic for 2026
+
+
 
