@@ -9,7 +9,7 @@
 
 | Session Sheet | Recording | Slides | Repo | Homework | Feedback |
 |:--------------|:----------|:-------|:-----|:---------|:---------|
-| [Synthetic Data Generation for Evals](../00_Docs/Session_Sheets/09_Synthetic_Data_Generation_for_Evals.md) | | | You are here! | | |
+| [Session 5: Synthetic Data for Evals](https://github.com/AI-Maker-Space/The-AI-Engineering-Certification-v1.0/tree/main/00_Docs/Modules/05_Synthetic_Data_Generation_for_Evals) |[Recording!](https://us02web.zoom.us/rec/share/hrSnunPHSLtrcxBV1TTwniYgSLhlWSkkcIVnxxODVUR0KWtcGscRBRoXPRcrCj1v.45qWYwlZEeH_PPE9) <br> passcode: `jt38+r$W`| [Session 5 Slides](https://canva.link/fpaffi4z92fwb0v) |You are here! | [Session 5 Assignment](https://forms.gle/H43rfDg7Y5X5gZkb8) | [Feedback 6/16](https://forms.gle/LXwuChFyA6PaUiME6) |
 
 ## Main Assignment
 
