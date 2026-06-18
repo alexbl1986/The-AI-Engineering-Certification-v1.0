@@ -13,7 +13,7 @@
 - Evaluation: [RAG ASessment](https://docs.ragas.io/en/stable)[, LangSmith Evaluations](https://docs.langchain.com/langsmith/evaluation)
 
 ## 📛 Required Tooling & Account Setup
-No new tools or accounts required for this session
+- Ensure you have a [gateways API Key](https://vercel.com/ai-gateway) today so we can play around with different models
    
 ## 📜 Recommended Reading
 - [Synthetic Test Data generation](https://docs.ragas.io/en/v0.1.21/concepts/testset_generation.html) (Ragas docs)
