@@ -1,11 +1,10 @@
-# Session 8: 🔌 MCP, and Agent Skills
+# Session 8: 🔌 MCP
 
 🎯 Understand MCP protocols as well as Agent Skills, and how they all complement each other as different tools in your toolbox
 
 📚 **Learning Outcomes**
 - Understand how and when to use MCP
 - Learn to set up your own MCP servers
-- Understand how to implement Agent Skills
 -  MCP vs. Skills: learn to choose the right tool for the job
 
 🧰 **New Tools**
