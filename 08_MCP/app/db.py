@@ -11,7 +11,7 @@ PRODUCTS = [
     ("Scratching Post Tower", "3-tier sisal scratching post with platforms", 49.99, "furniture"),
 ]
 
-
+#added an orders table (to save checked out orders and display them later)
 async def init_db(db: aiosqlite.Connection):
     await db.executescript(
         """
@@ -59,6 +59,13 @@ async def init_db(db: aiosqlite.Connection):
         );
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
+            created_at REAL NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS orders (
+            order_id TEXT PRIMARY KEY,
+            username TEXT NOT NULL,
+            items_json TEXT NOT NULL,
+            total REAL NOT NULL,
             created_at REAL NOT NULL
         );
         CREATE TABLE IF NOT EXISTS pending_authorizations (

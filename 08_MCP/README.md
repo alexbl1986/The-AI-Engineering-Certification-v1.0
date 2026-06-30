@@ -155,7 +155,20 @@ Why is OAuth important for MCP servers, and what security considerations should 
 
 #### Answer
 
-_(insert your answer here)_
+OAuth is not only important for MCP servers, but became the spec recommended authorization framework when a client connects to an MCP over HTTP. Per the MCP specifications (https://modelcontextprotocol.io/specification/2025-06-18/changelog), MCP servers are classified as "OAuth Resource Servers", meaning they hold the necessary discoverable resource metadata for MCP clients to connect to them securely. 
+- OAuth enables an MCP server to register different clients trying to connect to them and authorize them. It can also distinguish between different user credentials for each client, isolating their private information (for our cat shop mcp example, different users can connect to it using chatgpt, but each user will have its own cart status, checkout, etc. and won't have access to other user's carts) and permissions. When a user wants to connect an MCP server to his client, he enters his credentials, and according to those credentials an authorization code is created, which is then exchanged for a token allowing the user access to the MCP tools/resources according to his permissions. 
+
+- When exposing tools to AI clients, the following security considerations should be addressed:
+  - A login should have a username and password. Currently anyone can login with anyone else's username.
+  - Scope enforcement. In the current implementation, scope permissions are defined but not checked when tools are called. For example, if a user only has read permissions, he should be denied from the tool add_to_cart, but this check doesn't occur.
+  - Token storage: In the current implementation, tokens aren't encrypted/hashed, so if the sql database is stolen, the tokens can be used to get access to the mcp server user-associated tools/data.
+  - Redirect URI validation: An attacker can issue an authorization and send a login link to a user (with a redirect_uri set to the attacker's address), which will enable him to steal an authorization code associated with the user, when he tries to login. PKCE won't save the user because the authorization request didn't come from him. By validating that the redirect URI is associated with the registered client, this can be prevented when the MCP server receives the /authorize request. 
+  - Prompt injection. Because the llm decides which tools to call from the server, a malicious actor can, for our cat shop example, inject a checkout tool call as one of the items in the shop. Which is why before sensitive tool calls like checkout:
+    - user-in-the-loop verification should be added.
+    - The system prompt of the client should contain a message not to call sensitive write tools if a request is not an explicit user message.
+    - Tool results can be audited at the server level to check the data is of the intended structure.
+  - Rate limiting: tool usage should be rate limited according to the server's capabilities and reasonable user request rate.
+  
 
 ### Question #2
 
@@ -163,7 +176,8 @@ What is Streamable HTTP transport in MCP, and why might you expose a server publ
 
 #### Answer
 
-_(insert your answer here)_
+- Streamable HTTP transport in MCP is a way to send messages between an MCP server and clients. A client can send HTTP GET/POST requests and the server can stream SSE (server-sent event) responses and supports stateless operation. This means the server can be running on multiple machines, and serving multiple clients. All machines have a shared database, and when its updated, any client which reconnects later to a different machine (for load management) will get the correct and updated data according to the logged in user.
+- I would expose a server publicly with OAuth instead of a local stdio connection (all communication is made locally between the user and server which live on the same machine, so trust intrinsic) when I'd like clients which don't live on my local machine to connect to the server (for example allowing chatGPT to connect to my server), but then as its exposed to the internet, authorization is necessary to control anyone who tries to connect to the MCP server, authenticate them, isolate their data/permissions, and all the other necessary features described in answer to question 1.
 
 ## Activity 1: Extend the MCP Server
 

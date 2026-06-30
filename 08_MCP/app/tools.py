@@ -1,4 +1,7 @@
+import json
 import secrets
+import time
+from datetime import datetime, timezone #for displaying the order time when displaying orders
 
 from mcp.server.auth.middleware.auth_context import get_access_token
 
@@ -117,7 +120,7 @@ async def remove_from_cart(product_id: int) -> dict:
         return {"error": "Item not in cart"}
     return {"success": True, "message": "Item removed from cart"}
 
-
+# edited the checkout tool to save the order before clearing the cart for the new "get order history" tool
 @mcp.tool()
 async def checkout() -> dict:
     """Complete your purchase. Shows order summary and clears the cart."""
@@ -128,10 +131,14 @@ async def checkout() -> dict:
     if not cart["items"]:
         return {"error": "Your cart is empty"}
 
+    order_id = secrets.token_hex(8).upper()
+    await db.execute(
+        "INSERT INTO orders (order_id, username, items_json, total, created_at) VALUES (?, ?, ?, ?, ?)",
+        (order_id, username, json.dumps(cart["items"]), cart["total"], time.time()),
+    )
     await db.execute("DELETE FROM cart_items WHERE username = ?", (username,))
     await db.commit()
 
-    order_id = secrets.token_hex(8).upper()
     return {
         "order_id": order_id,
         "status": "confirmed",
@@ -139,3 +146,28 @@ async def checkout() -> dict:
         "total": cart["total"],
         "message": f"Order {order_id} confirmed! Thanks {username}, your cats will love their new goodies!",
     }
+
+# added an extra tool, get order history
+@mcp.tool()
+async def get_order_history() -> dict:
+    """View your past orders, most recent first, with items and totals."""
+    username = await _get_username()
+    db = await oauth_provider._get_db()
+    cursor = await db.execute(
+        "SELECT order_id, items_json, total, created_at FROM orders "
+        "WHERE username = ? ORDER BY created_at DESC",
+        (username,),
+    )
+    rows = await cursor.fetchall()
+    orders = [
+        {
+            "order_id": r[0],
+            "items": json.loads(r[1]),
+            "total": r[2],
+            "created_at": datetime.fromtimestamp(r[3], timezone.utc).strftime(
+                "%Y-%m-%d %H:%M UTC"
+            ),
+        }
+        for r in rows
+    ]
+    return {"orders": orders, "order_count": len(orders)}
