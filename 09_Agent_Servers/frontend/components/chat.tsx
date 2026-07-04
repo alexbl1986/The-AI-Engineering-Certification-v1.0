@@ -1,25 +1,31 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useStream } from "@langchain/react";
-import {
-  Bot,
-  FileText,
-  Loader2,
-  Search,
-  Send,
-  User,
-  Wrench,
-} from "lucide-react";
+import { Bot, FileText, Search, User, Wrench } from "lucide-react";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { getMessageText, toolLabel } from "@/lib/messages";
+
+import {
+  Conversation,
+  ConversationContent,
+  ConversationEmptyState,
+  ConversationScrollButton,
+} from "@/components/ai-elements/conversation";
+import { Message, MessageContent } from "@/components/ai-elements/message";
+import { Response } from "@/components/ai-elements/response";
+import { Loader } from "@/components/ai-elements/loader";
+import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
+import { Tool, ToolOutput } from "@/components/ai-elements/tool";
+import {
+  PromptInput,
+  PromptInputSubmit,
+  PromptInputTextarea,
+  PromptInputToolbar,
+} from "@/components/ai-elements/prompt-input";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "/api";
 
@@ -32,9 +38,9 @@ const SUGGESTIONS = [
 ];
 
 function toolIcon(name?: string) {
-  if (name === "retrieve_information") return <FileText className="size-3" />;
-  if (name?.startsWith("tavily")) return <Search className="size-3" />;
-  return <Wrench className="size-3" />;
+  if (name === "retrieve_information") return <FileText className="size-4" />;
+  if (name?.startsWith("tavily")) return <Search className="size-4" />;
+  return <Wrench className="size-4" />;
 }
 
 export function Chat({ assistantId }: { assistantId: string }) {
@@ -42,11 +48,6 @@ export function Chat({ assistantId }: { assistantId: string }) {
   const { messages, isLoading, error } = stream;
 
   const [input, setInput] = useState("");
-  const endRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, isLoading]);
 
   const send = (text: string) => {
     const content = text.trim();
@@ -55,39 +56,29 @@ export function Chat({ assistantId }: { assistantId: string }) {
     setInput("");
   };
 
-  const onSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    send(input);
-  };
-
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <ScrollArea className="flex-1">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-6">
+      <Conversation>
+        <ConversationContent>
           {messages.length === 0 && (
-            <div className="mt-10 flex flex-col items-center gap-6 text-center">
-              <div className="flex size-14 items-center justify-center rounded-full bg-muted">
-                <Bot className="size-7 text-muted-foreground" />
+            <ConversationEmptyState className="mt-10">
+              <div className="flex flex-col items-center gap-6">
+                <div className="flex size-14 items-center justify-center rounded-full bg-muted">
+                  <Bot className="size-7 text-muted-foreground" />
+                </div>
+                <div className="space-y-1">
+                  <h2 className="text-lg font-medium">Ask the cat health agent</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Streams from your LangGraph deployment via a secure proxy.
+                  </p>
+                </div>
+                <Suggestions>
+                  {SUGGESTIONS.map((s) => (
+                    <Suggestion key={s} suggestion={s} onClick={send} />
+                  ))}
+                </Suggestions>
               </div>
-              <div className="space-y-1">
-                <h2 className="text-lg font-medium">Ask the cat health agent</h2>
-                <p className="text-sm text-muted-foreground">
-                  Streams from your LangGraph deployment via a secure proxy.
-                </p>
-              </div>
-              <div className="flex flex-wrap justify-center gap-2">
-                {SUGGESTIONS.map((s) => (
-                  <Button
-                    key={s}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => send(s)}
-                  >
-                    {s}
-                  </Button>
-                ))}
-              </div>
-            </div>
+            </ConversationEmptyState>
           )}
 
           {messages.map((message, i) => (
@@ -103,37 +94,37 @@ export function Chat({ assistantId }: { assistantId: string }) {
               </CardContent>
             </Card>
           )}
-
-          <div ref={endRef} />
-        </div>
-      </ScrollArea>
+        </ConversationContent>
+        <ConversationScrollButton />
+      </Conversation>
 
       <div className="border-t bg-background">
-        <form
-          onSubmit={onSubmit}
-          className="mx-auto flex w-full max-w-3xl items-center gap-2 px-4 py-3"
-        >
-          <Input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Message the agent..."
-            disabled={isLoading}
-            className="h-10"
-            autoFocus
-          />
-          <Button
-            type="submit"
-            size="lg"
-            disabled={isLoading || input.trim().length === 0}
-            className="h-10"
+        <div className="mx-auto w-full max-w-3xl px-4 py-3">
+          <PromptInput
+            onSubmit={(e) => {
+              e.preventDefault();
+              send(input);
+            }}
           >
-            {isLoading ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Send className="size-4" />
-            )}
-          </Button>
-        </form>
+            <PromptInputTextarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onSubmit={() => send(input)}
+              placeholder="Message the agent..."
+              disabled={isLoading}
+              autoFocus
+            />
+            <PromptInputToolbar>
+              <span className="text-xs text-muted-foreground">
+                Enter to send · Shift+Enter for a new line
+              </span>
+              <PromptInputSubmit
+                status={isLoading ? "streaming" : "ready"}
+                disabled={isLoading || input.trim().length === 0}
+              />
+            </PromptInputToolbar>
+          </PromptInput>
+        </div>
       </div>
     </div>
   );
@@ -145,72 +136,58 @@ function MessageRow({ message }: { message: StreamMessage }) {
   const text = getMessageText(message.content);
   const toolCalls =
     message.type === "ai"
-      ? (message as unknown as {
-          tool_calls?: Array<{ name?: string; id?: string }>;
-        }).tool_calls ?? []
+      ? (
+          message as unknown as {
+            tool_calls?: Array<{ name?: string; id?: string }>;
+          }
+        ).tool_calls ?? []
       : [];
 
   if (isTool) {
     return (
-      <div className="mx-auto w-full max-w-3xl">
-        <details className="group rounded-lg border bg-muted/40 text-sm">
-          <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-muted-foreground">
-            {toolIcon(message.name)}
-            <span className="font-medium text-foreground">
-              {toolLabel(message.name)}
-            </span>
-            <span className="text-xs">tool result</span>
-          </summary>
-          <pre className="max-h-64 overflow-auto whitespace-pre-wrap px-3 pb-3 text-xs text-muted-foreground">
-            {text}
-          </pre>
-        </details>
-      </div>
+      <Tool
+        icon={toolIcon(message.name)}
+        title={toolLabel(message.name)}
+        state="completed"
+      >
+        <ToolOutput>{text}</ToolOutput>
+      </Tool>
     );
   }
 
   return (
-    <div
-      className={cn(
-        "flex w-full items-start gap-3",
-        isHuman && "flex-row-reverse"
-      )}
-    >
+    <div className={cn("flex w-full items-start gap-3", isHuman && "flex-row-reverse")}>
       <Avatar>
         <AvatarFallback>
-          {isHuman ? (
-            <User className="size-4" />
-          ) : (
-            <Bot className="size-4" />
-          )}
+          {isHuman ? <User className="size-4" /> : <Bot className="size-4" />}
         </AvatarFallback>
       </Avatar>
 
-      <div className={cn("flex max-w-[80%] flex-col gap-2", isHuman && "items-end")}>
+      <Message from={isHuman ? "user" : "assistant"} className="max-w-[80%]">
         {toolCalls.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {toolCalls.map((tc, idx) => (
-              <Badge key={tc.id ?? idx} variant="secondary">
+              <span
+                key={tc.id ?? idx}
+                className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground [&_svg]:size-3"
+              >
                 {toolIcon(tc.name)}
                 {toolLabel(tc.name)}
-              </Badge>
+              </span>
             ))}
           </div>
         )}
 
         {text && (
-          <div
-            className={cn(
-              "rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap",
-              isHuman
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-foreground"
+          <MessageContent>
+            {isHuman ? (
+              <span className="whitespace-pre-wrap">{text}</span>
+            ) : (
+              <Response>{text}</Response>
             )}
-          >
-            {text}
-          </div>
+          </MessageContent>
         )}
-      </div>
+      </Message>
     </div>
   );
 }
@@ -224,7 +201,7 @@ function ThinkingRow() {
         </AvatarFallback>
       </Avatar>
       <div className="flex items-center gap-2 rounded-2xl bg-muted px-4 py-3 text-sm text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" />
+        <Loader size={16} />
         Thinking...
       </div>
     </div>

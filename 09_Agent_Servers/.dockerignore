@@ -1,0 +1,14 @@
+# Frontend is a separate deployment — the agent image doesn't need it (~767 MB of node_modules/.next)
+frontend/
+
+# Python / uv local artifacts
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# VCS and caches
+.git/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
