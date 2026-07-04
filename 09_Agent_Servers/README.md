@@ -442,6 +442,8 @@ _(insert your answer here)_
 
 Build an `agent_with_helpfulness` graph that adds a post-response helpfulness check: after the agent answers, a judge model decides whether the response is helpful, and if not, the graph loops back for another attempt (with a safe loop limit). Register it in `langgraph.json`, deploy it, then compare LangSmith traces for queries that pass vs. fail the helpfulness check. Does the retry loop behave differently in Studio vs. production?
 
+Answer: I thought the retry loop behaved differently at first, because even though queries in the frontend passed the check, the retry loop still triggered. When inspecting the tracing, I found the cause: response metadata, output_version = v1 was added in production, which caused the llm output to return the content as a list of protocol blocks instead of text. Because in the production version, the consumption path requests message streaming from the backend, unlike running directly in studio where it wasn't in streaming mode. This broke my judge's output check which assumed the content would be text and not a list. It caused the judge verdit to always become false on the frontend. I fixed this by reading the directly text from messages (answer = messages[-1].text instead of answer = messages[-1].content)
+
 ## Advanced Activity: Auth and Custom Routes
 
 Research [LangSmith Deployments custom routes](https://github.com/langchain-samples/lsd-custom-route-react-ui) and describe how you could add authentication so each user only sees their own threads. Optionally implement a simple auth gate on your Vercel frontend.
