@@ -428,21 +428,26 @@ Why does LangSmith deploy your agent as an API backend only, and why do you stil
 
 #### Answer
 
-_(insert your answer here)_
+- Langsmith deploys my agent as an API backend only, because its purpose is to be the infrastructure for agent orchestration and observability. Its API exposes requests for an assistant (a particular agent with its graph), with its thread ID (where the agent state lives, held in checkpoints) and to run (invoke) the assistant with a certain input according to its state. The API can respond with an output of server-sent events, with its contents in json format. This type of output has no presentation layer, which would require a user-friendly UI, where the end-user can interact with, prompt and get responses from the agent in rich text (or potentially even image) format.
 
+- Which is why a separate frontend deployment like Vercel is needed, which can serve an HTML/CSS/JS app to a browser that renders Langsmith's output.
 ### Question #2
 
 Why should the LangSmith API key live in a Next.js API route (server-side) instead of in the browser?
 
 #### Answer
 
-_(insert your answer here)_
+- If the Langsmith API key would live in the browser, it would expose a vulnerability as any user would have access to it by inspecting the page, and then potentially use the key to access all the agent execution traces, exposing them to sensitive data on a production app, like the provider's proprietary agent graph, system prompts and other users data. 
+- Which is why the API key lives on the server side of the frontend, and whenever a user prompts the agent in the browser, the request passes through route.ts (which runs on the frontend server-side), which attaches the API key (together with the langgraph API address so that the request will know to reach the agent backend server). The API key doesn't have the NEXT_PUBLIC_ prefix and is never exposed on the "frontend side" of the frontend.
 
 ## Activity 1: Build a Helpfulness Loop in Production
 
 Build an `agent_with_helpfulness` graph that adds a post-response helpfulness check: after the agent answers, a judge model decides whether the response is helpful, and if not, the graph loops back for another attempt (with a safe loop limit). Register it in `langgraph.json`, deploy it, then compare LangSmith traces for queries that pass vs. fail the helpfulness check. Does the retry loop behave differently in Studio vs. production?
 
-Answer: I thought the retry loop behaved differently at first, because even though queries in the frontend passed the check, the retry loop still triggered. When inspecting the tracing, I found the cause: response metadata, output_version = v1 was added in production, which caused the llm output to return the content as a list of protocol blocks instead of text. Because in the production version, the consumption path requests message streaming from the backend, unlike running directly in studio where it wasn't in streaming mode. This broke my judge's output check which assumed the content would be text and not a list. It caused the judge verdit to always become false on the frontend. I fixed this by reading the directly text from messages (answer = messages[-1].text instead of answer = messages[-1].content)
+Answer: I thought the retry loop behaved differently at first, because even though queries in the frontend passed the check, the retry loop still triggered. When inspecting the tracing, I found the cause: 
+- When running directly in studio, the output is not in streaming mode, and the content returns directly as text.
+
+- In the production run, under response metadata: output_version = v1 was added, because the consumption path requests message streaming from the backend, and overrides the agent invocation streaming parameter. This caused the llm output to return the content as a list of content blocks instead of text. This broke my judge's implementation output check which assumed the content would be text and not a list. It caused the judge verdict to always return false, regardless of the llm's output. I fixed this by reading the text directly from messages (answer = messages[-1].text instead of answer = messages[-1].content), and afterwards when inspecting langsmith traces, the retry loop behaves the same way for studio and production, both for a pass example of the helpfulness check and a fail example (demonstrated in loom video)
 
 ## Advanced Activity: Auth and Custom Routes
 
