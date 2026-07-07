@@ -14,20 +14,31 @@ from typing import Any
 from langchain_core.messages import AIMessage
 from langchain_openai import ChatOpenAI
 
-FIREWORKS_BASE_URL = "https://api.fireworks.ai/inference/v1"
+# FIREWORKS_BASE_URL = "https://api.fireworks.ai/inference/v1"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
 
 def get_chat_model(model_name: str | None = None, *, temperature: float = 0) -> Any:
-    """Return a configured LangChain ChatOpenAI client pointed at Fireworks."""
-    name = model_name or os.environ.get(
-        "FIREWORKS_CHAT_MODEL", "accounts/fireworks/models/gpt-oss-20b"
-    )
+    """Return a configured LangChain ChatOpenAI client pointed at Groq."""
+    name = model_name or os.environ.get("GROQ_CHAT_MODEL", "openai/gpt-oss-20b")
     return ChatOpenAI(
         model=name,
         temperature=temperature,
-        openai_api_key=os.environ["FIREWORKS_API_KEY"],
-        openai_api_base=FIREWORKS_BASE_URL,
+        openai_api_key=os.environ["GROQ_API_KEY"],
+        openai_api_base=GROQ_BASE_URL,
     )
+
+# def get_chat_model(model_name: str | None = None, *, temperature: float = 0) -> Any:
+#     """Return a configured LangChain ChatOpenAI client pointed at Fireworks."""
+#     name = model_name or os.environ.get(
+#         "FIREWORKS_CHAT_MODEL", "accounts/fireworks/models/gpt-oss-20b"
+#     )
+#     return ChatOpenAI(
+#         model=name,
+#         temperature=temperature,
+#         openai_api_key=os.environ["FIREWORKS_API_KEY"],
+#         openai_api_base=FIREWORKS_BASE_URL,
+#     )
 
 
 def fix_tool_calls(response: AIMessage) -> AIMessage:

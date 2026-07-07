@@ -1,6 +1,6 @@
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from app.graphs.simple_agent import graph
+from app.graphs.agent_with_helpfulness import graph
 
 
 def display_messages(messages):

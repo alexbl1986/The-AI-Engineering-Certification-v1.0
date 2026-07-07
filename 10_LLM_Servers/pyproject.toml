@@ -23,4 +23,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "langgraph-cli>=0.4.14",
     "langgraph-api>=0.4.28",
+    "langchain-ollama>=1.1.0",
+    "pandas>=3.0.3",
+    "ragas>=0.4.3",
 ]

@@ -1,9 +1,6 @@
-<p align = "center" draggable="false" ><img src="https://github.com/AI-Maker-Space/LLM-Dev-101/assets/37101144/d1343317-fa2f-41e1-8af1-1dbb18399719"
-     width="200px"
-     height="auto"/>
-</p>
+# BODY TEST
 
-## <h1 align="center" id="heading">Session 10: LLM Servers</h1>
+If you can read this, the body Markdown is fine.
 
 | 📰 Session Sheet                                  | ⏺️ Recording                           | 🖼️ Slides                                   | 👨‍💻 Repo       | 📝 Homework                                              | 📁 Feedback                        |
 | ------------------------------------------------- | -------------------------------------- | ------------------------------------------- | ------------- | -------------------------------------------------------- | ---------------------------------- |
@@ -160,3 +157,4 @@ Swap out the Fireworks AI endpoints for **locally-running open-source models** u
 - Reflect: what are the trade-offs of local models vs. managed endpoints in a production setting?
 
 Include your findings and a demo in your Loom video.
+
