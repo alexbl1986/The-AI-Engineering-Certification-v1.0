@@ -139,11 +139,11 @@ Additionally, instrument both pipelines with **LangSmith** to capture token usag
   - Cost and latency breakdown:
     - A general caveat: I used Groq to call the open source chat model, which on one hand is free, on the other hand is rate limiting not calls per minute but tokens per minute, which is why the last 2 of the 4 calls took ~30 seconds of latency each to produce output. For this reason I will only take the first 2 calls into account when analyzing latency, and take the pricing of serverless Fireworks AI when analyzing cost:
     - PRICING:
-    "gpt-4.1-mini":       {"input": 0.40, "cached_input": 0.10, "output": 1.60},
-    "openai/gpt-oss-20b": {"input": 0.07, "cached_input": 0.04, "output": 0.30},
+    "gpt-4.1-mini":       {"input": 0.40$, "cached_input": 0.10$, "output": 1.60$},
+    "openai/gpt-oss-20b": {"input": 0.07$, "cached_input": 0.04$, "output": 0.30$},
     - Cost: (numbers taken from langsmith tracing, only tokens usage is shown for the open-source so the cost was calculated using the table above)
-      - gpt-4.1-mini: Average tokens usage: ~3.6K   Average cost: $0.00175
-      - gpt-oss-20b: Average token usage: ~ 3.75k    Average cost: $0.00037  
+      - gpt-4.1-mini: Average tokens usage: ~3.6K   Average cost: 0.00175$
+      - gpt-oss-20b: Average token usage: ~ 3.75k    Average cost: 0.00037$  
     - Latency:
       - gpt-4.1-mini: Average latency: 4.6s
       - gpt-oss-20b: Average latency: 1.25s 
