@@ -1,0 +1,17 @@
+.venv
+uv.lock
+.env
+__pycache__/
+*.pyc
+.langgraph_api/
+.vercel
+
+# Eval outputs — keep the folder, ignore generated artifacts
+artifacts/*
+!artifacts/.gitkeep
+
+# Private: discusses the real trader's workflow — never commit
+docs/PROTOTYPE_GAPS.md
+
+# Private: real IBKR statements & desk PDFs — never commit (ADR-0005)
+data/private/
