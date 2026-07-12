@@ -11,7 +11,7 @@ import csv
 import io
 from datetime import datetime
 
-from app.models import Position
+from app.trading.domain import Position
 
 
 def parse_tactical_book(content: str) -> list[Position]:

@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from app.ingest.tactical import parse_tactical_book
-from app.models import Position
+from app.trading.ingest.tactical import parse_tactical_book
+from app.trading.domain import Position
 
 REAL_FILE = Path(__file__).parent.parent / "data" / "private" / "Tactical_Boot.csv"
 

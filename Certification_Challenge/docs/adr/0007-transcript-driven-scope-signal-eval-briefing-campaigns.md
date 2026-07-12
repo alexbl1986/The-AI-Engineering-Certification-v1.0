@@ -1,5 +1,9 @@
 # Transcript-driven scope: pre-trade signal eval, daily briefing, campaign-scoped history
 
+> **Superseded in part (2026-07-11):** the `scan_deadlegs` tool and `dead_leg_floor`
+> ($0.50) named below were dropped after the trader confirmed the Thursday-flush rule
+> wasn't worth building as a machine check. The rest of this ADR stands.
+
 Reviewing the trader's real transcripts with his previous chat-agent setup revealed that
 his highest-frequency use case — evaluating an incoming trade signal — was missing from
 the route list, and that his rulebook is larger and more precise than the policy record

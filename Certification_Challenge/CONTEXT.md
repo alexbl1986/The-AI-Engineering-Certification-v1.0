@@ -40,10 +40,6 @@ current campaign. Rolls start a new campaign (v1).
 A campaign state: the contracts already sold brought in more cash than the whole trade
 cost, so the remaining position risks none of the trader's own capital.
 
-**Dead leg**:
-An option position now worth almost nothing and expiring imminently. Swept on Thursdays;
-below the $0.50 floor, selling costs more in commission than it returns — let it expire.
-
 **Roll**:
 Selling the current call to fund a higher-strike one, staying in the trade while
 extracting cash. The assistant discusses roll rules but never machine-grades a roll

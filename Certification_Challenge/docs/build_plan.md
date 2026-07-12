@@ -47,8 +47,7 @@ Trader owns and can edit his thresholds. Record fields = rules a route reads: si
 (options 1% / stocks 3% new / 6% existing-holding cap), 20% max offensive exposure,
 options ≤10% NAV, **hedge ratio = put value ÷ call value 10–15%** (his precise formula —
 confirm cross-hedge denominator with trader before Day 3), cross-hedge, scale-out,
-DTE exit matrix (4 tiers), IV-shield threshold (manual-check reminder), dead_leg_floor
-($0.50), moonshot +150%/+50% (labeled proxy). NOT machine-checked: roll rules (no free
+DTE exit matrix (4 tiers), IV-shield threshold (manual-check reminder), moonshot +150%/+50% (labeled proxy). NOT machine-checked: roll rules (no free
 Greeks), roll-chained campaigns, screenshot audits (redirect to re-upload).
 - **Agent shape (ADR-0006):** structured single-context LangGraph — intake/scoper
 (structured output, multi-label intent + entities + hypothetical flag, 1 clarification
@@ -60,7 +59,7 @@ Subagents rejected. Daily supersedes weekly on conflict (prompt + eval case).
 chain-verified expiry, size from policy, DTE-tier exit plan, desk bias+tier cross-ref
 incl. Tier-2 sizing cap, inventory conflict check, fail-loud IV rank → typed TradePlan;
 built LAST behind a clean seam, first cut if schedule slips) and `daily_briefing`
-(composition: exposure + scale-out + dead-legs + hedge ratio + desk summary + index
+(composition: exposure + scale-out + hedge ratio + desk summary + index
 technicals → DailyBriefing type).
 **Cold-start contract:** snapshot/ledger/corpus reads distinguish "never uploaded" from
 "empty result" — tools return typed `MissingData(store, remedy)` instead of an empty
@@ -72,8 +71,7 @@ uploads (policy record seeded at first login).
 current active campaign**: entry, scales, net basis, realized-so-far, house-money
 status; full history on explicit request; campaign = fills in same contract while
 continuously open, rolls don't chain in v1) / check_exposure / scan_scaleout (incl.
-moonshot ≥+150% proxy flag) / **scan_deadlegs** (option legs ≤ dead_leg_floor expiring
-this week, Thursday-aware) (Postgres snapshot) · performance-attribution tools (Tier 1:
+moonshot ≥+150% proxy flag) (Postgres snapshot) · performance-attribution tools (Tier 1:
 realized P/L by symbol/class/month, win rate, cost drag, hedge cost, scale-out proxy —
 from IBKR's own Realized P/L column) · get_quote / get_option_chain /
 get_technical_snapshot (50/200d MA, RSI, swing hi/lo) · search_web (Tavily) ·
@@ -87,7 +85,7 @@ path-dependent moonshot, screenshot compliance audits.
   endpoint; default `openai/gpt-5.4-mini` — verify slug day 1). Embeddings direct OpenAI
   `text-embedding-3-large`. Qdrant Cloud free (vectors), Railway Postgres (checkpointer +
   Store + parsed snapshot). LangSmith EU + gateway dashboard. Simple credential login
-  (2 users: alex-demo / yuri-real), user_id scopes everything.
+  (2 users: alex-demo / real-user), user_id scopes everything.
 - **Data policy (ADR-0005):** real statements & desk PDFs never in git; synthetic fixtures
 (statement + 1 daily + 1 weekly Hebrew reviews) committed; deployed endpoint gated;
 tracing behind env flag; committed eval artifacts = questions/ground truth/summary tables.
@@ -129,7 +127,7 @@ marked as-of-date).
 truth) + adaptive chunker (tested on all 6 archive PDFs) + Qdrant indexing w/ replace-on-
 upload + reject-and-advise guardrail. Deterministic tools incl. Tier-1 attribution +
 technical snapshot + **campaign grouping for get_trades (house-money derived field) +
-scan_deadlegs + moonshot proxy flag** (pytest goldens for each). Retrieval pipeline
+moonshot proxy flag** (pytest goldens for each). Retrieval pipeline
 (dense + BM25/RRF + parent-child).
 
 **Day 3 — agent + UI + deploy:** LangGraph graph (intake → pre-fetch → agent → synthesis →

@@ -137,4 +137,4 @@ filled in from the real source documents.
 | 10 | Is the market trending with or against my book right now? | The regime read against my net exposure — is my positioning aligned or exposed |
 | 11 | Did AI/chips move sharply today, and does it hit my book? | Segment move + my exposed positions + what to adjust |
 | 12 | Signal: "AAOI 150 NEXT WEEK 3.1" — do I take it, and how big? | Parsed contract (call, chain-verified expiry); max contracts under sizing rules; stop/target/scale levels for its expiry tier; desk bias & tier on the name; conflicts with existing inventory; IV rank flagged for manual check |
-| 13 | Morning briefing — where do I stand going into today? | Book status + per-rule flags (incl. Thursday dead legs), hedge ratio, the desk's read for today, index regime |
+| 13 | Morning briefing — where do I stand going into today? | Book status + per-rule flags, hedge ratio, the desk's read for today, index regime |

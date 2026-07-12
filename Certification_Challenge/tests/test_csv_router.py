@@ -5,7 +5,7 @@ Fixtures: header lines are copied verbatim from the real IBKR exports
 (data/private/, gitignored); data rows are synthetic.
 """
 
-from app.ingest.csv_router import CsvKind, sniff_csv_format
+from app.trading.ingest.csv_router import CsvKind, sniff_csv_format
 
 # Real first line of the tactical book export (flat Flex table, fully quoted).
 TACTICAL_HEADER = (
