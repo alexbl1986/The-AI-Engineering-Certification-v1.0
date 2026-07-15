@@ -1,11 +1,13 @@
 """Assemble the trading-assistant graph from an injected `AgentContext`.
 
-Topology so far: intake/scoper -> deterministic pre-fetch by route -> per-route
-synthesis -> deterministic audit (one bounce back to synthesis, then deliver with
-a warning banner). Still to come behind the same `build_graph(context)` seam: the
-open-ended tool agent and interrupt-gated policy writes. A scoped-out message
-(needs a clarifying answer, or purely off_topic) is answered by the scoper and
-skips the rest.
+Topology: intake/scoper (per-turn state resets, one clarify round max) ->
+deterministic CSV pre-fetch -> answering agent (a bounded tool loop on the
+user-visible thread: desk retrieval / quotes / web) -> deterministic audit
+(one bounce back to the answer node — tools off — then deliver with a warning
+banner). A policy_change routes through the interrupt-gated prepare/confirm
+pair first, then continues into pre-fetch when the message also asked a
+question. A scoped-out message (awaiting a clarifying answer, or purely
+off_topic) is answered by the scoper and skips the rest.
 """
 
 from __future__ import annotations
@@ -14,6 +16,11 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from app.graphs.trading_assistant.answer import (
+    make_answer_node,
+    make_tools_node,
+    route_after_answer,
+)
 from app.graphs.trading_assistant.audit import MAX_ATTEMPTS, make_audit_node
 from app.graphs.trading_assistant.deps import AgentContext
 from app.graphs.trading_assistant.policy import (
@@ -23,7 +30,6 @@ from app.graphs.trading_assistant.policy import (
 from app.graphs.trading_assistant.prefetch import make_prefetch_node
 from app.graphs.trading_assistant.scope import make_scope_node
 from app.graphs.trading_assistant.state import AgentState
-from app.graphs.trading_assistant.synthesis import make_synthesis_node
 
 
 def _route_after_scope(state: AgentState) -> str:
@@ -37,10 +43,24 @@ def _route_after_scope(state: AgentState) -> str:
     return "prefetch"
 
 
+def _non_policy_intents(state: AgentState) -> set[str]:
+    return set(state["scope"].intents) - {"policy_change", "off_topic"}
+
+
 def _route_after_policy_prepare(state: AgentState) -> str:
-    # Only pause for approval if a concrete change was parsed; otherwise the
-    # prepare node already asked which rule to change.
-    return "policy_confirm" if state.get("proposed_change") else END
+    if state.get("proposed_change"):
+        return "policy_confirm"
+    # No concrete change parsed. If policy_change was the whole message, the
+    # prepare node already asked which rule; but co-intents still owe an answer
+    # (the ask travels as `policy_note`) — a misrouted read like "what's my
+    # current policy?" must never dead-end on the write gate.
+    return "prefetch" if _non_policy_intents(state) else END
+
+
+def _route_after_policy_confirm(state: AgentState) -> str:
+    # A mixed message ("raise my cap to 12% — am I within policy?") still owes
+    # the non-policy half an answer, computed against the just-decided policy.
+    return "prefetch" if _non_policy_intents(state) else END
 
 
 def _route_after_audit(state: AgentState) -> str:
@@ -48,7 +68,7 @@ def _route_after_audit(state: AgentState) -> str:
         return END
     if state.get("synthesis_attempts", 1) >= MAX_ATTEMPTS:
         return END  # delivered with a warning banner
-    return "synthesis"  # one bounce to fix the unbacked figures
+    return "answer"  # one bounce to fix the unbacked figures (tools off)
 
 
 def build_graph(
@@ -63,7 +83,8 @@ def build_graph(
     builder = StateGraph(AgentState)
     builder.add_node("scope", make_scope_node(context))
     builder.add_node("prefetch", make_prefetch_node(context))
-    builder.add_node("synthesis", make_synthesis_node(context))
+    builder.add_node("answer", make_answer_node(context))
+    builder.add_node("tools", make_tools_node(context))
     builder.add_node("audit", make_audit_node(context))
     builder.add_node("policy_prepare", make_policy_prepare_node(context))
     builder.add_node("policy_confirm", make_policy_confirm_node(context))
@@ -74,15 +95,20 @@ def build_graph(
         _route_after_scope,
         {"prefetch": "prefetch", "policy_prepare": "policy_prepare", END: END},
     )
-    builder.add_edge("prefetch", "synthesis")
-    builder.add_edge("synthesis", "audit")
+    builder.add_edge("prefetch", "answer")
     builder.add_conditional_edges(
-        "audit", _route_after_audit, {"synthesis": "synthesis", END: END}
+        "answer", route_after_answer, {"tools": "tools", "audit": "audit"}
+    )
+    builder.add_edge("tools", "answer")
+    builder.add_conditional_edges(
+        "audit", _route_after_audit, {"answer": "answer", END: END}
     )
     builder.add_conditional_edges(
         "policy_prepare",
         _route_after_policy_prepare,
-        {"policy_confirm": "policy_confirm", END: END},
+        {"policy_confirm": "policy_confirm", "prefetch": "prefetch", END: END},
     )
-    builder.add_edge("policy_confirm", END)
+    builder.add_conditional_edges(
+        "policy_confirm", _route_after_policy_confirm, {"prefetch": "prefetch", END: END}
+    )
     return builder.compile(checkpointer=checkpointer)

@@ -19,17 +19,19 @@ class PolicyRecord:
     """Versioned exposure rules. Fractions are decimals (0.10 == 10%)."""
 
     options_limit: float = 0.10          # options ≤ 10% of NAV
-    max_offensive_exposure: float = 0.20  # ≤ 20% active offensive exposure
     option_sizing_pct: float = 0.01       # 1% of NAV per new option entry
     stock_sizing_pct_new: float = 0.03    # 3% of NAV per new stock entry
     existing_holding_cap: float = 0.06    # 6% cap on an existing holding
     hedge_ratio_low: float = 0.10         # hedge = put/call value, target 10–15%
     hedge_ratio_high: float = 0.15
-    iv_shield: float = 0.70               # IV rank ≥ 70% -> mandate a spread (manual)
-    scale_out_first: float = 1.00         # +100% -> sell one contract
-    scale_out_second: float = 2.00        # +200% -> sell another
-    moonshot_trigger: float = 1.50        # +150% -> moonshot runner
-    moonshot_stop: float = 0.50           # hard stop back at +50%
+    scale_out_first: float = 1.00         # +100% -> sell one contract (rung 1)
+    scale_out_second: float = 2.00        # +200% -> sell another (rung 2)
+    # Deliberately NOT here (backlogged, see task6 refinements R3 + ADR-0007
+    # amendments): the moonshot endgame (+150% arms a +50% hard stop —
+    # path-dependent, unenforceable from snapshots), the IV shield (returns
+    # with full trade_signal_eval as a fail-loud manual reminder), and the
+    # max-offensive-exposure cap ("offensive" was never defined). An
+    # unenforced field that looks machine-managed is a liability.
     version: int = 1
 
 
@@ -46,17 +48,13 @@ class FieldSpec:
 # The editable rules (version is not user-editable). Keys match PolicyRecord fields.
 FIELDS: dict[str, FieldSpec] = {
     "options_limit": FieldSpec("options exposure cap", "nav_fraction", "options as a share of NAV"),
-    "max_offensive_exposure": FieldSpec("max offensive exposure", "nav_fraction", "active offensive exposure cap"),
     "option_sizing_pct": FieldSpec("per-option entry size", "nav_fraction", "NAV per new option entry"),
     "stock_sizing_pct_new": FieldSpec("per-stock entry size", "nav_fraction", "NAV per new stock entry"),
     "existing_holding_cap": FieldSpec("existing-holding cap", "nav_fraction", "cap on an existing holding"),
     "hedge_ratio_low": FieldSpec("hedge ratio floor", "nav_fraction", "low end of the put/call hedge band"),
     "hedge_ratio_high": FieldSpec("hedge ratio ceiling", "nav_fraction", "high end of the put/call hedge band"),
-    "iv_shield": FieldSpec("IV-shield threshold", "nav_fraction", "IV rank that mandates a spread"),
-    "scale_out_first": FieldSpec("first scale-out trigger", "gain_ratio", "gain that sells one contract"),
-    "scale_out_second": FieldSpec("second scale-out trigger", "gain_ratio", "gain that sells another"),
-    "moonshot_trigger": FieldSpec("moonshot trigger", "gain_ratio", "gain that flags a moonshot runner"),
-    "moonshot_stop": FieldSpec("moonshot stop", "gain_ratio", "gain the moonshot stop falls back to"),
+    "scale_out_first": FieldSpec("first scale-out trigger", "gain_ratio", "gain that sells the first contract"),
+    "scale_out_second": FieldSpec("second scale-out trigger", "gain_ratio", "gain that sells the second contract"),
 }
 
 

@@ -96,6 +96,27 @@ def test_reports_a_losing_option_with_multiplier():
     assert report.total_unrealized_pl == pytest.approx(-300.0)
 
 
+def test_short_option_gain_flips_sign():
+    # Sold 2 contracts @ 2.00 (premium collected), now marked 0.50: 75% of the
+    # premium is captured, so the position is UP +75% / +$300 — the long-side
+    # ratio (mark/entry - 1 = -75%) must flip for a short leg. The dollar P/L
+    # already rides on the signed position_value.
+    trades = [_opt_entry("ZETA 17JUL26 35 C", -2, 2.00)]
+    positions = [
+        Position(
+            symbol="ZETA", asset_class="OPT", currency="USD", fx_rate_to_base=1.0,
+            quantity=-2.0, mark_price=0.50, position_value=-100.0,
+            strike=35.0, expiry=date(2026, 7, 17), right="C",
+        )
+    ]
+
+    report = open_position_pnl(positions, trades)
+
+    (line,) = report.lines
+    assert line.unrealized_pl == pytest.approx(300.0)
+    assert line.gain == pytest.approx(0.75)
+
+
 # --- contract guards (pass on arrival; the slice-1 formula is already general) ---
 
 def test_foreign_pnl_normalized_and_totalled_across_currencies():
@@ -162,5 +183,7 @@ def test_real_book_pnl_is_internally_consistent():
     # Total is exactly the sum of the lines, and each line's gain is consistent.
     assert report.total_unrealized_pl == pytest.approx(sum(l.unrealized_pl for l in report.lines))
     for line in report.lines:
-        assert line.gain == pytest.approx(line.mark_price / line.avg_entry_price - 1)
+        # Magnitude check: the sign is direction-dependent (the real book holds
+        # a short ZETA call) and PositionPnL doesn't carry the quantity.
+        assert abs(line.gain) == pytest.approx(abs(line.mark_price / line.avg_entry_price - 1))
         assert line.cost_basis_source in {"ledger", "statement"}

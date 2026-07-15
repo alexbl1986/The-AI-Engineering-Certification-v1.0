@@ -72,3 +72,54 @@ Demo Day items this creates: Discord signal bridge (push → auto-eval), IBKR AP
 CSV uploads, paid options data (unlocks honest IV rank, Greeks/roll grading, historical
 option prices), roll-aware campaign chaining. The full plain-language gap list for the
 trader lives in the gitignored `docs/PROTOTYPE_GAPS.md`.
+
+## Amendment (2026-07-15) — fills-based scale-out ladder; moonshot fields removed
+
+The "moonshot thresholds as a labeled proxy" decision above is superseded. Two insights
+from a design review with the trader: (1) the rulebook contains two DIFFERENT rule
+types that the old single-label, current-gain-only classification wrongly forced onto
+one axis — sale rungs (sell contract 1 at +100%, contract 2 at +200%), which are keyed
+on how many sales were already made, and a protection rule (+150% arms a hard stop at
++50% on the remainder), which is an alarm, not a sale; (2) the campaign's recorded
+sell fills ARE the ladder state, so no threshold reordering is needed and the scan can
+be honest about what was already done.
+
+`scan_scaleout` is now stateful: `Campaign.scale_outs` counts closing-direction fills
+(events, not contracts) in the open campaign; 0 sales + gain ≥ `scale_out_first` →
+first tranche due; 1 sale + gain ≥ `scale_out_second` → second tranche due; 2+ sales →
+**moonshot runner**, reported at ANY current gain as inventory (a melted runner stays
+on the report), never as an action. This ended the scan's re-nagging (acting on a flag
+is itself the state change that clears it) and, on the real book, corrected a live
+verdict: IGV at +223% was flagged "moonshot" by the old proxy, but the ledger shows one
+scale-out already taken — the true next action is the second sale, which the new scan
+reports.
+
+**`moonshot_trigger` and `moonshot_stop` are removed from the policy record** (trader
+decision, applying this ADR's own charter: an unenforced field that looks
+machine-managed is a liability). The runner's endgame is explicitly manual: the stop
+rule is path-dependent ("ever touched +150%"), snapshots cannot see the path, and the
+digest's runner line says so ("exit is manual — path not tracked"). Known bound,
+accepted: the sales count is only as old as the statement window, so a pre-window
+scale-out reads as rung 0 — the same visibility bound the cost-basis fallback already
+has.
+
+## Amendment (2026-07-15) — sizing-only trade_signal_eval; policy record trimmed to enforced rules
+
+The trader's #1 route ships in its honest first cut. `size_trade_signal` (a tool on the
+answering agent's roster, mandatory on the `trade_signal_eval` intent via a prompt rule
+carrying the verbatim `signal_text`): the LLM's only job is parsing the pasted shorthand
+into typed args; the money math is code (`app.trading.sizing.size_new_position` — budget
+= NAV × the policy's per-entry percentage, whole units floored, option multiplier
+applied), so every figure is audit-backed. The output adds two book cross-checks from
+the same snapshot the exposure check reads (already-held inventory; options-cap headroom
+after the entry) and ends with a mandatory NOT-CHECKED list — chain existence/liquidity,
+IV rank, DTE exit plan, desk view — the fail-loud boundary of the cut. Missing NAV
+returns the cold-start upload ask instead of a zero-sized plan.
+
+With the sizing fields now consumed, the policy record is trimmed to EXACTLY the rules
+code enforces (8 fields): `iv_shield` and `max_offensive_exposure` are removed
+(trader decision, applying this ADR's charter). Backlog disposition (task6 refinements
+R3): the IV shield returns with the full trade_signal_eval as the fail-loud manual
+reminder this ADR already prescribed; `max_offensive_exposure` needs the trader to
+define "offensive exposure" before any code could read it — define it or drop it for
+good. The DTE exit matrix and chain verification remain the rest of the full route.

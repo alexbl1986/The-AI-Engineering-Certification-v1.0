@@ -21,19 +21,34 @@ class MissingData:
 
 class ScaleOutSignal(Enum):
     NONE = "none"
-    SCALE_OUT = "scale_out"  # gain >= +100%: scale 50%
-    MOONSHOT = "moonshot"  # gain >= +150%: moonshot, hard stop @ +50%
+    FIRST_TRANCHE_DUE = "first_tranche_due"    # no sales recorded, gain >= first rung
+    SECOND_TRANCHE_DUE = "second_tranche_due"  # one sale recorded, gain >= second rung
+    MOONSHOT_RUNNER = "moonshot_runner"        # ladder complete (2+ sales): report only
 
 
 @dataclass(frozen=True)
 class ScaleOutCandidate:
-    """An open position flagged for profit-taking by scan_scaleout."""
+    """An open position the ladder scan flags (an action due, or a runner)."""
 
     symbol: str
     signal: ScaleOutSignal
     gain: float  # ratio vs avg entry: +100% == 1.0
     avg_entry_price: float
     mark_price: float
+    scales_taken: int = 0  # closing-direction fills recorded in the open campaign
+    quantity: float = 0.0  # contracts currently held, from the snapshot
+
+
+@dataclass(frozen=True)
+class TradeSizing:
+    """What the per-entry sizing rule buys for a pasted trade signal."""
+
+    kind: str          # "option" | "stock"
+    pct_of_nav: float  # the sizing rule applied
+    budget: float      # nav x pct
+    unit_cost: float   # premium x 100 per contract, or the share price
+    quantity: int      # whole contracts/shares the budget buys (floored)
+    cost: float        # quantity x unit_cost
 
 
 @dataclass(frozen=True)
@@ -77,14 +92,41 @@ class ExposureCheck:
 
 
 @dataclass(frozen=True)
+class HedgeCheck:
+    """The hedge ratio — put value / call value — against the policy band.
+
+    His precise formula (not puts/NAV): base-currency absolute option values,
+    shorts included by magnitude. Band-shaped, unlike `ExposureCheck`'s single
+    ceiling: below `low` is under-hedged, above `high` over-hedged.
+    """
+
+    put_value_base: float
+    call_value_base: float
+    ratio: float
+    low: float
+    high: float
+
+    @property
+    def status(self) -> str:
+        if self.ratio < self.low:
+            return "under"
+        if self.ratio > self.high:
+            return "over"
+        return "within"
+
+
+@dataclass(frozen=True)
 class ExposureReport:
     """check_exposure's result: the NAV used plus one check per policy bucket.
 
     `nav` is surfaced for provenance (the exact denominator every pct rides on).
+    `hedge` is None when no band was requested or the book has no call value
+    (no denominator — never a division blowup).
     """
 
     nav: float
     checks: tuple[ExposureCheck, ...]
+    hedge: HedgeCheck | None = None
 
 
 @dataclass(frozen=True)
@@ -155,6 +197,53 @@ class Trade:
 
 
 @dataclass(frozen=True)
+class Split:
+    """One stock split from the statement's Corporate Actions section.
+
+    `numerator`-for-`denominator` new shares per old (8-for-1 forward,
+    1-for-8 reverse). `effective` is the action's Date/Time (after the
+    close), the moment that separates pre-split fills from post-split ones.
+    """
+
+    symbol: str
+    numerator: int
+    denominator: int
+    effective: datetime
+
+
+@dataclass(frozen=True)
+class TickerPerformance:
+    """One underlying's summed realized P/L (IBKR's own signed column)."""
+
+    root_ticker: str
+    realized_pl: float
+
+
+@dataclass(frozen=True)
+class PerformanceReport:
+    """performance_summary's result: Tier-1 realized attribution from the ledger.
+
+    Every figure comes from IBKR's own signed Realized P/L / commission columns,
+    never recomputed from fills. Win rate counts CLOSED campaigns only — an open
+    runner isn't a win yet — and is None when nothing has closed.
+    """
+
+    total_realized_pl: float
+    by_month: tuple[tuple[str, float], ...]  # ("2026-01", 600.0), chronological
+    top_winners: tuple[TickerPerformance, ...]
+    top_losers: tuple[TickerPerformance, ...]  # most negative first
+    closed_campaigns: int
+    winning_campaigns: int
+    commission_total: float  # signed as IBKR reports it (negative = paid)
+
+    @property
+    def win_rate(self) -> float | None:
+        if self.closed_campaigns == 0:
+            return None
+        return self.winning_campaigns / self.closed_campaigns
+
+
+@dataclass(frozen=True)
 class Campaign:
     """A continuously-open run of fills in one contract (same raw symbol).
 
@@ -186,6 +275,18 @@ class Campaign:
         opens = [f for f in self.fills if (f.quantity > 0) == opened_long]
         qty = sum(abs(f.quantity) for f in opens)
         return sum(abs(f.quantity) * f.price for f in opens) / qty
+
+    @property
+    def scale_outs(self) -> int:
+        """Closing-direction fills recorded so far — the ladder rungs taken.
+
+        Counts fill events, not contracts ("sell one contract" is one rung,
+        even if a single order prints as one multi-contract fill). Only fills
+        inside the statement window are visible, so a pre-window scale-out
+        does not count — same bound as the ledger itself.
+        """
+        opened_long = self.fills[0].quantity > 0
+        return sum(1 for f in self.fills if (f.quantity > 0) != opened_long)
 
     @property
     def house_money(self) -> bool:

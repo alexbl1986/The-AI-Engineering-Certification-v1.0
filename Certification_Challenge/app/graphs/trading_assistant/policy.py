@@ -55,6 +55,19 @@ def make_policy_prepare_node(context: AgentContext) -> Callable[[AgentState], di
         )
         if not parsed.recognized or parsed.field not in FIELDS:
             editable = ", ".join(spec.label for spec in FIELDS.values())
+            remaining = set(state["scope"].intents) - {"policy_change", "off_topic"}
+            if remaining:
+                # Co-intents keep the run alive: the ask rides into the answer
+                # as a note instead of a counter-question eating the question.
+                return {
+                    "policy": policy,
+                    "policy_note": (
+                        "The message was also read as a request to change a rule, but "
+                        "no specific rule and new value could be identified. If the "
+                        "user did want a change, ask which rule and to what value "
+                        f"(editable: {editable}); otherwise just answer."
+                    ),
+                }
             return {
                 "policy": policy,
                 "messages": [

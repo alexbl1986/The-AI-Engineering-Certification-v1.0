@@ -10,7 +10,10 @@
 
 ## R1. Deterministic ticker extraction in the scoper
 
-**Status:** open — not yet decided.
+**Status:** open — not yet decided. *(Premise update 2026-07-14:
+`app/rag/chunk.py::_extract_tickers` no longer exists — the RAG-layer tickers metadata
+was removed as unused. The refinement stands on its own merits, but the regex+whitelist
+extractor would need to be (trivially) recreated rather than reused.)*
 
 **Current behavior.** The intake/scoper node (`app/graphs/trading_assistant/scope.py`)
 asks the LLM to produce the whole `Scope` in one structured-output call, including
@@ -66,4 +69,37 @@ daily-vs-weekly collision, cold-start, off-topic) becomes the semantic check. Th
 already in the plan; the note here is to make sure the routing cases explicitly cover
 misroutes like the dogecoin example and any ticker mis-extraction from R1.
 
+*(Case added 2026-07-14, from a studio run:)* "what's my current policy?" was tagged
+`status_check + policy_change` even though the model's own assumption said "not
+requesting a change" — a policy READ must never carry `policy_change`. The prompt now
+has an explicit read-vs-write rule (pinned by a unit test), and the graph survives the
+misroute regardless (failed parse with co-intents continues to prefetch), but the
+rubric should assert the label directly.
+
 **Recommendation.** Build with Task 5; no separate work.
+
+---
+
+## R3. Backlogged policy rules: IV shield and max offensive exposure
+
+**Status:** deliberately out of scope for the prototype (trader decision, 2026-07-15).
+
+**Context.** The policy record's charter (ADR-0007) is "nothing enters the record that
+no code reads." After the fills-based scale-out ladder (which removed the moonshot
+fields) and the sizing-only `trade_signal_eval` (which gave the two sizing percentages
+their consumer), two fields remained with no reader and were removed from
+`PolicyRecord`/`FIELDS`:
+
+- **`iv_shield` (was 70%).** Returns with the FULL `trade_signal_eval` route as the
+  fail-loud manual reminder ADR-0007 prescribes ("IV rank ≥ 70% mandates a spread —
+  check manually"); it is never a computation (no free IV-rank history; a verdict from
+  stale IV is the false-confidence failure the app exists to prevent). Until then, the
+  sizing tool's NOT-CHECKED list names IV rank explicitly.
+- **`max_offensive_exposure` (was 20%).** No consumer was ever designed and "active
+  offensive exposure" was never defined (all long calls? calls + growth-stock
+  positions? everything that isn't a hedge?). Precondition for revival: the trader
+  defines the position set; then it is one more `ExposureCheck` inside
+  `check_exposure`. If no definition materializes, remove permanently.
+
+**Consequence accepted:** "what's my current policy?" recites only the 8 enforced
+rules; these two live in the trader's own rulebook documents, not in the app.

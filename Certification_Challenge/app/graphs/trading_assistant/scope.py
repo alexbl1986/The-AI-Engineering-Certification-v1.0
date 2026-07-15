@@ -9,9 +9,9 @@ the only place free-text becomes routing.
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Sequence
 
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
 
 from app.graphs.trading_assistant.deps import AgentContext
 from app.graphs.trading_assistant.state import AgentState, Scope
@@ -27,7 +27,9 @@ Routes (choose ALL that apply — a single message can need several):
 - desk_question: what the desk thinks about a name/theme/sector (from the reviews).
 - trade_history: how a specific position/campaign is going (entry, scales, basis).
 - performance_review: realized P/L, win rate, cost drag over a period.
-- policy_change: a request to CHANGE a rule/threshold (e.g. "raise my options cap to 12%").
+- policy_change: a request to CHANGE a rule/threshold to a stated new value (e.g. "raise
+  my options cap to 12%"). Asking what the rules ARE ("what's my current policy?") is a
+  status_check read, never policy_change.
 - market_regime: live macro / index read (needs no uploaded data).
 - trade_signal_eval: a pasted trade shorthand like "AAOI 150 NEXT WEEK 3.1".
 - daily_briefing: "morning briefing" / "start my day" — the full composed rundown.
@@ -54,19 +56,53 @@ OFF_TOPIC_REFUSAL = (
     "one's outside what I do."
 )
 
+# Emitted when the model wants to clarify but returned no question — a silent
+# END with no reply is never acceptable.
+DEFAULT_CLARIFY_QUESTION = (
+    "Can you say a bit more about what you're after — which position, rule, or "
+    "desk view do you mean?"
+)
 
-def _normalize_scope(scope: Scope) -> Scope:
+
+def _normalize_scope(scope: Scope, *, already_clarified: bool = False) -> Scope:
     """Deterministic safety net around the LLM's routing (ADR-0006).
 
-    A hypothetical about a rule ("if I raised my cap to 12%…") is analysis, never
-    a write — but the model sometimes still tags `policy_change` on it. Strip it
-    so the interrupt-gated write path can never fire on a hypothetical; fall back
-    to `status_check` if that empties the routes.
+    Two guards the prompt alone cannot guarantee:
+      * a hypothetical about a rule ("if I raised my cap to 12%…") is analysis,
+        never a write — strip `policy_change` so the interrupt-gated path can
+        never fire on it (fall back to `status_check` if that empties the routes);
+      * ONE clarify round max — once a question was asked on this thread turn
+        cycle, an insistent model is overridden into best-effort with a stated
+        assumption, mirroring the `synthesis_attempts` cap.
     """
     if scope.hypothetical and "policy_change" in scope.intents:
         intents = [i for i in scope.intents if i != "policy_change"] or ["status_check"]
-        return scope.model_copy(update={"intents": intents})
+        scope = scope.model_copy(update={"intents": intents})
+    if already_clarified and scope.needs_clarification:
+        scope = scope.model_copy(
+            update={
+                "needs_clarification": False,
+                "clarifying_question": None,
+                "intents": scope.intents or ["status_check"],
+                "assumptions": [
+                    *scope.assumptions,
+                    "Proceeding on best-effort assumptions — one clarifying "
+                    "question was already asked.",
+                ],
+            }
+        )
     return scope
+
+
+def _scoper_view(messages: Sequence[AnyMessage]) -> list[AnyMessage]:
+    """Human/assistant text only. The answering agent's tool loop runs on the
+    same thread, but tool-call turns and tool results are noise to routing."""
+    return [
+        m
+        for m in messages
+        if isinstance(m, HumanMessage)
+        or (isinstance(m, AIMessage) and not m.tool_calls)
+    ]
 
 
 def make_scope_node(context: AgentContext) -> Callable[[AgentState], dict]:
@@ -74,13 +110,35 @@ def make_scope_node(context: AgentContext) -> Callable[[AgentState], dict]:
     model = context.chat_model.with_structured_output(Scope)
 
     def scope_node(state: AgentState) -> dict:
-        conversation = [SystemMessage(content=SCOPER_SYSTEM), *state["messages"]]
-        scope: Scope = _normalize_scope(model.invoke(conversation))
-        update: dict = {"scope": scope}
+        conversation = [SystemMessage(content=SCOPER_SYSTEM), *_scoper_view(state["messages"])]
+        scope: Scope = _normalize_scope(
+            model.invoke(conversation),
+            already_clarified=bool(state.get("pending_clarification")),
+        )
+        update: dict = {
+            "scope": scope,
+            # Per-turn resets: the thread's state survives across runs, so a
+            # previous turn's repair budget, audit feedback, evidence, or
+            # pending policy proposal must never leak into this one.
+            "synthesis_attempts": 0,
+            "audit_feedback": None,
+            "evidence": [],
+            "missing": [],
+            "synthesis": None,
+            "audit": None,
+            "proposed_change": None,
+            "policy_note": None,
+            "pending_clarification": False,
+            "tool_rounds": 0,
+        }
         # One clarify round: surface the question as an assistant turn and stop;
-        # the user's reply re-enters the graph as a fresh message.
-        if scope.needs_clarification and scope.clarifying_question:
-            update["messages"] = [AIMessage(content=scope.clarifying_question)]
+        # the user's reply re-enters the graph as a fresh message, where the
+        # pending flag turns any second ask into best-effort proceeding.
+        if scope.needs_clarification:
+            update["messages"] = [
+                AIMessage(content=scope.clarifying_question or DEFAULT_CLARIFY_QUESTION)
+            ]
+            update["pending_clarification"] = True
         elif set(scope.intents) <= {"off_topic"}:
             update["messages"] = [AIMessage(content=OFF_TOPIC_REFUSAL)]
         return update

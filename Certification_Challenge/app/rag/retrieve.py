@@ -1,11 +1,11 @@
-"""Hybrid retrieval pipeline: dense + BM25 (RRF) + parent-child recovery.
+"""Hybrid retrieval pipeline: dense + BM25 fused with reciprocal rank fusion.
 
-This is the Task-4 base pipeline (build_plan): first-stage dense and lexical
-retrieval over the child chunks are fused with reciprocal rank fusion, then each
-surviving child is resolved to its full section (parent) so the model reads
-whole-section context. Cohere reranking (Task 6.1) layers on top later.
+First-stage dense and lexical retrieval both run over the chunk corpus and are
+fused with RRF; the fused chunks are returned verbatim (chunk size is bounded
+at ingest, and each chunk carries its section heading in-text plus full
+metadata for tracing). Cohere reranking (Task 6.1) layers on top later.
 
-BM25 is rebuilt per query from the user's child chunks in Qdrant — the corpus is
+BM25 is rebuilt per query from the user's chunks in Qdrant — the corpus is
 tiny (two reviews) and replace-on-upload keeps it fresh, so there is no separate
 lexical index to fall out of sync. The tokenizer is Unicode-aware: the course's
 ``[a-z0-9]+`` would drop every Hebrew token, which is most of this corpus.
@@ -30,16 +30,14 @@ def tokenize(text: str) -> list[str]:
 
 @dataclass(frozen=True)
 class RetrievedDoc:
-    id: str  # chunk_id for children, parent_id for recovered parents
+    id: str  # the chunk_id — traceable to docs/chunk_preview and the Qdrant point
     text: str
     score: float | None
     doc_type: str
     review_date: str | None
     source: str
     section: str | None
-    parent_id: str
     pages: tuple[int, ...]
-    tickers: tuple[str, ...]
 
 
 def reciprocal_rank_fusion(
@@ -60,7 +58,7 @@ def reciprocal_rank_fusion(
 
 
 class HybridRetriever:
-    """Dense + BM25 (RRF) over children, resolved to full-section parents."""
+    """Dense + BM25 (RRF) over the user's chunk corpus."""
 
     def __init__(
         self,
@@ -77,7 +75,7 @@ class HybridRetriever:
         return [_from_hit(hit) for hit in self._index.search(query, user_id=user_id, k=k)]
 
     def bm25(self, query: str, *, user_id: str, k: int) -> list[RetrievedDoc]:
-        docs = self._index.all_children(user_id=user_id)
+        docs = self._index.all_chunks(user_id=user_id)
         if not docs:
             return []
         bm25 = BM25Okapi([tokenize(doc.text) for doc in docs])
@@ -85,7 +83,8 @@ class HybridRetriever:
         ranked = sorted(range(len(docs)), key=lambda i: scores[i], reverse=True)[:k]
         return [replace(_from_hit(docs[i]), score=float(scores[i])) for i in ranked]
 
-    def hybrid_children(self, query: str, *, user_id: str, k: int) -> list[RetrievedDoc]:
+    def retrieve(self, query: str, *, user_id: str, k: int = 5) -> list[RetrievedDoc]:
+        """Full pipeline: top-``k`` RRF-fused chunks from dense + BM25."""
         return reciprocal_rank_fusion(
             [
                 self.dense(query, user_id=user_id, k=self._first_stage_k),
@@ -95,43 +94,15 @@ class HybridRetriever:
             rrf_constant=self._rrf_constant,
         )
 
-    def retrieve(self, query: str, *, user_id: str, k: int = 5) -> list[RetrievedDoc]:
-        """Full base pipeline: hybrid children resolved to unique parents."""
-        children = self.hybrid_children(query, user_id=user_id, k=self._first_stage_k)
-        return self._recover_parents(children, user_id=user_id, k=k)
 
-    def _recover_parents(
-        self, children: Sequence[RetrievedDoc], *, user_id: str, k: int
-    ) -> list[RetrievedDoc]:
-        order: list[tuple[str, float | None]] = []
-        seen: set[str] = set()
-        for child in children:
-            if child.parent_id and child.parent_id not in seen:
-                seen.add(child.parent_id)
-                order.append((child.parent_id, child.score))
-
-        parents = self._index.get_parents([pid for pid, _ in order], user_id=user_id)
-        recovered: list[RetrievedDoc] = []
-        for parent_id, score in order:
-            hit = parents.get(parent_id)
-            if hit is None:
-                continue
-            recovered.append(replace(_from_hit(hit, use_parent_id=True), score=score))
-            if len(recovered) == k:
-                break
-        return recovered
-
-
-def _from_hit(hit: SearchHit, *, use_parent_id: bool = False) -> RetrievedDoc:
+def _from_hit(hit: SearchHit) -> RetrievedDoc:
     return RetrievedDoc(
-        id=hit.parent_id if use_parent_id else hit.chunk_id,
+        id=hit.chunk_id,
         text=hit.text,
         score=hit.score or None,
         doc_type=hit.doc_type,
         review_date=hit.review_date,
         source=hit.source,
         section=hit.section,
-        parent_id=hit.parent_id,
         pages=hit.pages,
-        tickers=hit.tickers,
     )

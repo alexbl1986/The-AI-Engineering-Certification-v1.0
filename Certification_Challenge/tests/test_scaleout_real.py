@@ -25,15 +25,19 @@ def test_scan_on_real_data_is_consistent_and_ledger_gated():
     # No ledger -> refuse, regardless of positions.
     assert isinstance(scan_scaleout(positions, []), MissingData)
 
-    # With a ledger -> a list; every candidate genuinely clears a threshold and
-    # its flag matches its gain.
+    # With a ledger -> a list; every candidate is an option (the ladder is
+    # options-only) and its flag matches its recorded ladder state + gain.
     candidates = scan_scaleout(positions, trades)
     assert isinstance(candidates, list)
+    option_symbols = {p.symbol for p in positions if p.asset_class == "OPT"}
     for c in candidates:
+        assert c.symbol in option_symbols
         assert c.signal is not ScaleOutSignal.NONE
-        assert c.gain >= 1.0
         assert c.mark_price / c.avg_entry_price - 1 == pytest.approx(c.gain)
-        expected = (
-            ScaleOutSignal.MOONSHOT if c.gain >= 1.5 else ScaleOutSignal.SCALE_OUT
-        )
-        assert c.signal == expected
+        if c.signal is ScaleOutSignal.FIRST_TRANCHE_DUE:
+            assert c.scales_taken == 0 and c.gain >= 1.0
+        elif c.signal is ScaleOutSignal.SECOND_TRANCHE_DUE:
+            assert c.scales_taken == 1 and c.gain >= 2.0
+        else:  # a runner is inventory — reported at any gain
+            assert c.signal is ScaleOutSignal.MOONSHOT_RUNNER
+            assert c.scales_taken >= 2

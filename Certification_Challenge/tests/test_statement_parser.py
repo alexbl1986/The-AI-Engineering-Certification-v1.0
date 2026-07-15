@@ -5,13 +5,17 @@ records. Header lines are verbatim from the real export; data rows are
 synthetic (real fills live only in gitignored data/private/).
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
 
-from app.trading.ingest.statement import parse_activity_statement
-from app.trading.domain import Trade
+from app.trading.ingest.statement import (
+    parse_activity_statement,
+    parse_splits,
+    parse_statement_as_of,
+)
+from app.trading.domain import Split, Trade
 
 REAL_FILE = Path(__file__).parent.parent / "data" / "private" / "IBKR YTD Statement.csv"
 
@@ -118,6 +122,56 @@ def test_parses_an_option_order_and_extracts_root_ticker():
     assert trade.quantity == -2.0
     assert trade.realized_pl == -388.76228
     assert trade.commission == -1.5
+
+
+def test_parses_stock_splits_from_corporate_actions():
+    # Verbatim section format from the real export. The ratio and symbol live
+    # only in the free-text Description; the effective moment is Date/Time
+    # (20:25 = after the close), NOT the Report Date. Total rows and non-split
+    # actions must be ignored.
+    content = (
+        "Corporate Actions,Header,Asset Category,Currency,Report Date,Date/Time,"
+        "Description,Quantity,Proceeds,Value,Realized P/L,Code\n"
+        'Corporate Actions,Data,Stocks,USD,2026-07-02,"2026-07-01, 20:25:00",'
+        '"SMTOY(US8656172033) Split 8 for 1 (SMTOY, SUMITOMO ELEC INDS-UNSP ADR, '
+        'US8656172033)",210,0,0,0,\n'
+        'Corporate Actions,Data,Stocks,USD,2026-05-01,"2026-04-30, 20:25:00",'
+        '"FAKE(US0000000000) Merged (Acquisition) (FAKE, FAKE CORP, US0000000000)",'
+        "-10,100,0,0,\n"
+        "Corporate Actions,Data,Total,,,,,,0,0,0,\n"
+    )
+
+    splits = parse_splits(content)
+
+    assert splits == [
+        Split(
+            symbol="SMTOY",
+            numerator=8,
+            denominator=1,
+            effective=datetime(2026, 7, 1, 20, 25, 0),
+        )
+    ]
+
+
+def test_no_corporate_actions_section_means_no_splits():
+    assert parse_splits(TRADES_HEADER + "\n") == []
+
+
+def test_statement_as_of_is_the_period_end_date():
+    # The Statement section's Period field ("January 1, 2026 - July 3, 2026",
+    # verbatim format from the real export) dates every figure in the file —
+    # NAV, ledger, realized P/L all run "through" its end date.
+    content = (
+        "Statement,Header,Field Name,Field Value\n"
+        "Statement,Data,Title,Activity Statement\n"
+        'Statement,Data,Period,"January 1, 2026 - July 3, 2026"\n'
+        'Statement,Data,WhenGenerated,"2026-07-06, 08:42:24 EDT"\n'
+    )
+    assert parse_statement_as_of(content) == date(2026, 7, 3)
+
+
+def test_statement_as_of_none_when_section_absent():
+    assert parse_statement_as_of(TRADES_HEADER + "\n") is None
 
 
 @pytest.mark.skipif(not REAL_FILE.exists(), reason="real (gitignored) statement not present")

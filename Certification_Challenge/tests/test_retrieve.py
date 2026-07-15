@@ -1,4 +1,4 @@
-"""Hybrid retrieval pipeline: tokenizer, RRF, and end-to-end parent recovery.
+"""Hybrid retrieval pipeline: tokenizer, RRF, and end-to-end chunk retrieval.
 
 Offline throughout: in-memory Qdrant + a deterministic token-hashing embedder
 whose tokenizer (\\w+) covers Hebrew, so dense retrieval works on the real
@@ -6,13 +6,12 @@ reviews without the network.
 """
 
 import math
-import re
 from pathlib import Path
 
 import pytest
 from qdrant_client import QdrantClient
 
-from app.rag.chunk import Chunk, Parent, chunk_document, parent_documents
+from app.rag.chunk import Chunk, chunk_document
 from app.rag.index import CorpusIndex
 from app.rag.retrieve import (
     HybridRetriever,
@@ -58,10 +57,10 @@ def test_tokenizer_covers_hebrew():
 # --- RRF -----------------------------------------------------------------
 
 
-def _doc(doc_id, parent_id="p"):
+def _doc(doc_id):
     return RetrievedDoc(
         id=doc_id, text="x", score=None, doc_type="daily", review_date=None,
-        source="s", section=None, parent_id=parent_id, pages=(1,), tickers=(),
+        source="s", section=None, pages=(1,),
     )
 
 
@@ -78,58 +77,45 @@ def test_rrf_rewards_agreement_across_lists():
 
 
 def _synthetic_corpus():
-    parents = [
-        Parent("daily-d-s00", "Memory HBM DRAM shortage Micron capex pricing power full section",
-               "daily", "2026-07-08", "d.pdf", "Memory", (1,), ("MU",)),
-        Parent("daily-d-s01", "Iran oil Oman risk premium macro energy full section",
-               "daily", "2026-07-08", "d.pdf", "Oil", (2,), ()),
+    return [
+        _chunk("daily-d-s00-c00", "Memory HBM DRAM shortage Micron", "Memory"),
+        _chunk("daily-d-s00-c01", "capex memory pricing power", "Memory"),
+        _chunk("daily-d-s01-c00", "Iran oil Oman risk premium", "Oil"),
     ]
-    children = [
-        _child("daily-d-s00-c00", "daily-d-s00", "Memory HBM DRAM shortage Micron", "Memory", ("MU",)),
-        _child("daily-d-s00-c01", "daily-d-s00", "capex memory pricing power", "Memory", ()),
-        _child("daily-d-s01-c00", "daily-d-s01", "Iran oil Oman risk premium", "Oil", ()),
-    ]
-    return children, parents
 
 
-def _child(chunk_id, parent_id, text, section, tickers):
+def _chunk(chunk_id, text, section):
     return Chunk(
         text=text, doc_type="daily", review_date="2026-07-08", source="d.pdf",
-        chunk_id=chunk_id, parent_id=parent_id, section=section, pages=(1,),
-        tickers=tickers, start_index=0,
+        chunk_id=chunk_id, section=section, pages=(1,),
     )
 
 
-def test_retrieve_returns_deduped_full_section_parents():
+def test_retrieve_returns_ranked_deduped_chunks():
     idx = _index()
-    children, parents = _synthetic_corpus()
-    idx.replace_document(children, parents, user_id="alex")
+    idx.replace_document(_synthetic_corpus(), user_id="alex")
 
     results = HybridRetriever(idx).retrieve("DRAM shortage Micron", user_id="alex", k=2)
 
-    assert results[0].id == "daily-d-s00"  # parent id, not a child id
-    assert results[0].text == parents[0].text  # full section, not the child snippet
-    assert results[0].parent_id == "daily-d-s00"
-    assert len({r.id for r in results}) == len(results)  # each parent once
+    assert results[0].id == "daily-d-s00-c00"  # the chunk itself, verbatim
+    assert results[0].text == "Memory HBM DRAM shortage Micron"
+    assert results[0].section == "Memory"
+    assert len({r.id for r in results}) == len(results)  # each chunk once
 
 
 def test_bm25_finds_exact_lexical_token():
     idx = _index()
-    children, parents = _synthetic_corpus()
-    idx.replace_document(children, parents, user_id="alex")
+    idx.replace_document(_synthetic_corpus(), user_id="alex")
 
     hits = HybridRetriever(idx).bm25("Oman", user_id="alex", k=1)
-    assert hits and hits[0].parent_id == "daily-d-s01"
+    assert hits and hits[0].id == "daily-d-s01-c00"
 
 
 def test_retrieval_respects_user_isolation():
     idx = _index()
-    children, parents = _synthetic_corpus()
-    idx.replace_document(children, parents, user_id="alex")
+    idx.replace_document(_synthetic_corpus(), user_id="alex")
     idx.replace_document(
-        [_child("daily-d-s00-c00", "daily-d-s09", "Palladium squeeze demo only", "PD", ("PALL",))],
-        [Parent("daily-d-s09", "Palladium squeeze synthetic demo section", "daily",
-                "2026-07-08", "d.pdf", "PD", (1,), ("PALL",))],
+        [_chunk("daily-d-s09-c00", "Palladium squeeze demo only", "PD")],
         user_id="demo",
     )
 
@@ -140,11 +126,9 @@ def test_retrieval_respects_user_isolation():
 @pytest.mark.parametrize("query,needle", [("TSMC PIC CPO אופטית צוואר בקבוק", "TSMC")])
 def test_end_to_end_on_real_daily_review(query, needle):
     idx = _index()
-    idx.replace_document(
-        chunk_document(str(DAILY)), parent_documents(str(DAILY)), user_id="alex"
-    )
+    idx.replace_document(chunk_document(str(DAILY)), user_id="alex")
     results = HybridRetriever(idx).retrieve(query, user_id="alex", k=3)
 
     assert results
-    assert all("-c" not in r.id for r in results)  # parents, not children
+    assert all("-c" in r.id for r in results)  # chunk ids, traceable to preview
     assert any(needle in r.text for r in results)

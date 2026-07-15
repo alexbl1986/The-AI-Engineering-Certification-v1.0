@@ -39,6 +39,9 @@ pypdf output = ground truth for repair unit tests). Adaptive structure-aware chu
 per-doc modal font = body, ≥ body+~2pt = headings clustered per-doc; chunk = between
 headings; guardrails (sub-split long, merge tiny). Metadata: review_date, doc_type,
 section, tickers (whitelist-validated, ALSO verbatim in text for BM25), page.
+*(Amended 2026-07-14: tickers metadata dropped — never wired to a whitelist in prod and
+unused downstream; layout tables now serialized row-wise at extraction — ADR-0004
+amendment.)*
 Scanned/image PDFs rejected with "attach it in chat instead" advice (session-scoped read).
 - **Rules (ADR-0003, scope expanded by ADR-0007 from real-usage transcripts):** exposure
 policy = typed record in persistent LangGraph Store, seeded from default config; writes
@@ -96,6 +99,8 @@ tracing behind env flag; committed eval artifacts = questions/ground truth/summa
 
 - **Base prototype (Task 4) ships the full pipeline: dense(3-large) → +BM25 w/ RRF →
 +parent-child recovery** (child = theme block, parent = full section).
+*(Amended 2026-07-14: parent-child recovery removed — chunks retrieved directly, verbatim
+and traceable to `docs/chunk_preview`; see ADR-0006 amendment.)*
 - **Task 6.1 advanced addition: Cohere reranking** on top. Before/after table = base
 pipeline vs. +rerank (LangSmith experiments).
 - **Task 6.3 "other piece": embedder A/B** (3-large vs 3-small, optionally Cohere
@@ -128,7 +133,7 @@ truth) + adaptive chunker (tested on all 6 archive PDFs) + Qdrant indexing w/ re
 upload + reject-and-advise guardrail. Deterministic tools incl. Tier-1 attribution +
 technical snapshot + **campaign grouping for get_trades (house-money derived field) +
 moonshot proxy flag** (pytest goldens for each). Retrieval pipeline
-(dense + BM25/RRF + parent-child).
+(dense + BM25/RRF + parent-child). *(Amended 2026-07-14: parent-child removed.)*
 
 **Day 3 — agent + UI + deploy:** LangGraph graph (intake → pre-fetch → agent → synthesis →
 audit → interrupt), policy record + update_policy, memory wiring, cold-start contract

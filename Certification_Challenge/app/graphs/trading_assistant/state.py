@@ -1,9 +1,9 @@
 """Graph state and the scoper's structured output (ADR-0006).
 
 `AgentState` is the single reasoning context that flows through the graph:
-intake/scoper -> deterministic pre-fetch -> tool agent -> synthesis -> audit.
-Slice 1 populates only `messages` and `scope`; later slices add the evidence
-table, typed synthesis, and audit result.
+intake/scoper -> deterministic pre-fetch -> answering agent (tool loop on the
+`messages` thread) -> audit. Slice 1 populates only `messages` and `scope`;
+later slices add the evidence table, the audit-gated draft, and audit result.
 
 `Scope` is the scoper node's structured output: a MULTI-LABEL intent (one message
 can be both "am I within policy?" and "what does the desk think?"), the entities
@@ -90,11 +90,12 @@ class EvidenceItem:
 
 @dataclass(frozen=True)
 class SynthesisResult:
-    """The synthesis node's output before delivery.
+    """The answering agent's draft, gated by the audit before delivery.
 
     `answer` is the user-facing markdown. `grounding` is the deterministic fact
-    digest plus quoted desk snippets it was written from — the ONLY source the
-    audit node accepts numbers from, so a $/% figure absent here is unbacked.
+    digest plus every tool result on the thread — the ONLY source the audit
+    node accepts numbers from, so a $/% figure absent here is unbacked.
+    (The name is historical: the draft lives in `state["synthesis"]`.)
     """
 
     answer: str
@@ -118,11 +119,25 @@ class AgentState(TypedDict):
     # defaulted for local Studio runs.
     user_id: NotRequired[str]
     scope: NotRequired[Scope]
+    # True while the turn just asked a clarifying question; the next run's
+    # scoper reads it to enforce "one clarify round max" deterministically.
+    pending_clarification: NotRequired[bool]
+    # Everything below `scope` is PER-TURN state on a thread that persists
+    # across runs: the scope node (first node of every run) resets it all, or
+    # one turn's repair budget / audit feedback / pending proposal leaks into
+    # the next (`| None` marks the keys whose reset value is None).
     evidence: NotRequired[list[EvidenceItem]]
     missing: NotRequired[list[MissingData]]
-    synthesis: NotRequired[SynthesisResult]
-    audit: NotRequired[AuditResult]
+    # The answering agent's loop counter; the loop itself runs on `messages`,
+    # so tool calls and results persist in the thread for follow-up questions.
+    tool_rounds: NotRequired[int]
+    synthesis: NotRequired[SynthesisResult | None]
+    audit: NotRequired[AuditResult | None]
     synthesis_attempts: NotRequired[int]
-    audit_feedback: NotRequired[str]
+    audit_feedback: NotRequired[str | None]
     policy: NotRequired[PolicyRecord]
-    proposed_change: NotRequired[ProposedPolicyChange]
+    proposed_change: NotRequired[ProposedPolicyChange | None]
+    # Set when a policy_change parse failed but co-intents keep the run alive:
+    # the answering agent folds the "which rule?" ask into its answer instead
+    # of the gate replacing the whole answer with a counter-question.
+    policy_note: NotRequired[str | None]

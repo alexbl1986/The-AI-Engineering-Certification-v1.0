@@ -2,17 +2,16 @@
 
 The reviews carry no fixed template, so we chunk on the layout signal instead:
 the per-doc char-weighted modal font size is the body, anything ~2pt larger is a
-heading, and a chunk is the body between consecutive headings. The parent unit
-for parent-child recovery is the whole section; each child is a packed sub-chunk
-that carries its ``parent_id`` back to it. Two guardrails keep children
-retrieval-sized: long sections are packed to a character budget, and repeated
-page furniture (headers/footers) is dropped.
+heading, and a chunk is the body between consecutive headings. Long sections are
+packed to a character budget and repeated page furniture (headers/footers) is
+dropped. Table regions arrive from extraction as pipe-joined row lines, so a
+chunk keeps each name on the same row as its desk action.
 
-The section heading is **prepended into the searchable text** of both the parent
-and every child (so BM25/dense can match on it) and is *also* kept as the
-``section`` metadata field for citation. Other metadata — source, chunk_id,
-parent_id, review_date, doc_type, pages, tickers, start_index — follows the
-course conventions in 01_Dense_Vector_Retrieval / 07_Advanced_Retrievers.
+The section heading is **prepended into the searchable text** of every chunk
+(so BM25/dense can match on it) and is *also* kept as the ``section`` metadata
+field for citation. Other metadata — source, chunk_id, review_date, doc_type,
+pages — follows the course conventions in 01_Dense_Vector_Retrieval /
+07_Advanced_Retrievers.
 """
 
 from __future__ import annotations
@@ -30,10 +29,6 @@ from app.rag.extract import (
     modal_body_size,
 )
 
-# Latin upper-case run that could be a ticker; validated against a whitelist
-# when one is supplied (build_plan: "tickers whitelist-validated").
-_TICKER = re.compile(r"\b[A-Z]{1,5}\b")
-
 # A line repeated on this many distinct pages is page furniture, not content.
 _BOILERPLATE_PAGE_THRESHOLD = 3
 
@@ -44,32 +39,15 @@ _MIN_CHUNK_CHARS = 40
 
 @dataclass(frozen=True)
 class Chunk:
-    """A retrieval child: packed sub-chunk of a section, heading-in-text."""
+    """A retrieval chunk: packed sub-chunk of a section, heading-in-text."""
 
     text: str
     doc_type: str
     review_date: str | None
     source: str
     chunk_id: str
-    parent_id: str
     section: str | None
     pages: tuple[int, ...]
-    tickers: tuple[str, ...]
-    start_index: int
-
-
-@dataclass(frozen=True)
-class Parent:
-    """A full section — the unit parent-child recovery returns."""
-
-    parent_id: str
-    text: str
-    doc_type: str
-    review_date: str | None
-    source: str
-    section: str | None
-    pages: tuple[int, ...]
-    tickers: tuple[str, ...]
 
 
 @dataclass
@@ -81,47 +59,11 @@ class _Section:
 def chunk_document(
     path: str,
     *,
-    ticker_whitelist: set[str] | None = None,
     heading_gap: float = 2.0,
     min_chars: int = 200,
     max_chars: int = 1200,
 ) -> list[Chunk]:
-    """The retrieval children (heading-injected, section-tagged) for a review."""
-    return _build(
-        path,
-        ticker_whitelist=ticker_whitelist,
-        heading_gap=heading_gap,
-        min_chars=min_chars,
-        max_chars=max_chars,
-    )[1]
-
-
-def parent_documents(
-    path: str,
-    *,
-    ticker_whitelist: set[str] | None = None,
-    heading_gap: float = 2.0,
-    min_chars: int = 200,
-    max_chars: int = 1200,
-) -> list[Parent]:
-    """The full-section parents (keyed by ``parent_id``) for a review."""
-    return _build(
-        path,
-        ticker_whitelist=ticker_whitelist,
-        heading_gap=heading_gap,
-        min_chars=min_chars,
-        max_chars=max_chars,
-    )[0]
-
-
-def _build(
-    path: str,
-    *,
-    ticker_whitelist: set[str] | None,
-    heading_gap: float,
-    min_chars: int,
-    max_chars: int,
-) -> tuple[list[Parent], list[Chunk]]:
+    """The retrieval chunks (heading-injected, section-tagged) for a review."""
     spans = extract_spans(path)
     doc_type = detect_doc_type(spans)
     review_date = detect_review_date(spans)
@@ -129,61 +71,55 @@ def _build(
     threshold = modal_body_size(spans) + heading_gap
     sections = _split_into_sections(_drop_boilerplate(extract_lines(path)), threshold)
 
-    parents: list[Parent] = []
-    children: list[Chunk] = []
+    chunks: list[Chunk] = []
     for s_idx, section in enumerate(sections):
         packs = _pack(section.lines, min_chars, max_chars)
         if not packs:
             continue  # heading-only section -> nothing to index
 
-        parent_id = f"{doc_type}-{review_date or 'unknown'}-s{s_idx:02d}"
         heading = section.heading
-        section_pages = tuple(sorted({ln.page for ln in section.lines}))
-        parent_text = _with_heading(heading, " ".join(ln.text for ln in section.lines).strip())
-        parents.append(
-            Parent(
-                parent_id=parent_id,
-                text=parent_text,
-                doc_type=doc_type,
-                review_date=review_date,
-                source=source,
-                section=heading,
-                pages=section_pages,
-                tickers=_extract_tickers(parent_text, ticker_whitelist),
-            )
-        )
-
-        # Reserve room so the injected heading keeps children within budget.
+        # Reserve room so the injected heading keeps chunks within budget.
         body_budget = max(max_chars - (len(heading) + 1 if heading else 0), min_chars)
-        offset = 0
         c_idx = 0
         for piece in packs:
             pages = tuple(sorted({ln.page for ln in piece}))
-            body = " ".join(ln.text for ln in piece).strip()
+            body = _join_lines(piece)
             for sub in _split_long(body, body_budget):
-                text = _with_heading(heading, sub)
-                children.append(
+                chunks.append(
                     Chunk(
-                        text=text,
+                        text=_with_heading(heading, sub),
                         doc_type=doc_type,
                         review_date=review_date,
                         source=source,
-                        chunk_id=f"{parent_id}-c{c_idx:02d}",
-                        parent_id=parent_id,
+                        chunk_id=(
+                            f"{doc_type}-{review_date or 'unknown'}"
+                            f"-s{s_idx:02d}-c{c_idx:02d}"
+                        ),
                         section=heading,
                         pages=pages,
-                        tickers=_extract_tickers(text, ticker_whitelist),
-                        start_index=offset,
                     )
                 )
-                offset += len(sub) + 1
                 c_idx += 1
 
-    return parents, _merge_fragments(children, ticker_whitelist)
+    return _merge_fragments(chunks)
 
 
 def _with_heading(heading: str | None, body: str) -> str:
     return f"{heading}\n{body}".strip() if heading else body
+
+
+def _join_lines(lines: list[Line]) -> str:
+    """Join a pack's lines with spaces, except around table rows (pipe-joined
+    by extraction), which keep their own line so row boundaries survive."""
+    body = ""
+    prev_is_row = False
+    for line in lines:
+        is_row = " | " in line.text
+        if body:
+            body += "\n" if (is_row or prev_is_row) else " "
+        body += line.text
+        prev_is_row = is_row
+    return body.strip()
 
 
 def _is_heading(line: Line, threshold: float) -> bool:
@@ -273,9 +209,7 @@ def _split_long(text: str, max_chars: int) -> list[str]:
     return pieces
 
 
-def _merge_fragments(
-    chunks: list[Chunk], whitelist: set[str] | None
-) -> list[Chunk]:
+def _merge_fragments(chunks: list[Chunk]) -> list[Chunk]:
     """Fold sub-``_MIN_CHUNK_CHARS`` fragments into an adjacent chunk.
 
     A fragment merges into the previous chunk (keeping that chunk's section),
@@ -284,34 +218,23 @@ def _merge_fragments(
     merged: list[Chunk] = []
     for chunk in chunks:
         if len(chunk.text) < _MIN_CHUNK_CHARS and merged:
-            merged[-1] = _join(merged[-1], chunk, whitelist)
+            merged[-1] = _join(merged[-1], chunk)
         else:
             merged.append(chunk)
     # A leading fragment couldn't merge backward; merge it forward.
     if len(merged) > 1 and len(merged[0].text) < _MIN_CHUNK_CHARS:
-        merged[1] = _join(merged[0], merged[1], whitelist)
+        merged[1] = _join(merged[0], merged[1])
         merged.pop(0)
     return merged
 
 
-def _join(a: Chunk, b: Chunk, whitelist: set[str] | None) -> Chunk:
-    text = f"{a.text} {b.text}".strip()
+def _join(a: Chunk, b: Chunk) -> Chunk:
     return Chunk(
-        text=text,
+        text=f"{a.text} {b.text}".strip(),
         doc_type=a.doc_type,
         review_date=a.review_date,
         source=a.source,
         chunk_id=a.chunk_id,
-        parent_id=a.parent_id,
         section=a.section if a.section is not None else b.section,
         pages=tuple(sorted(set(a.pages) | set(b.pages))),
-        tickers=_extract_tickers(text, whitelist),
-        start_index=a.start_index,
     )
-
-
-def _extract_tickers(text: str, whitelist: set[str] | None) -> tuple[str, ...]:
-    candidates = {m.group() for m in _TICKER.finditer(text)}
-    if whitelist is not None:
-        candidates &= whitelist
-    return tuple(sorted(candidates))

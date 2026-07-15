@@ -43,7 +43,7 @@ def _index() -> CorpusIndex:
 _ids = itertools.count()
 
 
-def _chunk(text, doc_type="daily", date="2026-07-08", section=None, tickers=()):
+def _chunk(text, doc_type="daily", date="2026-07-08", section=None):
     n = next(_ids)  # globally unique so point ids never collide
     return Chunk(
         text=text,
@@ -51,16 +51,13 @@ def _chunk(text, doc_type="daily", date="2026-07-08", section=None, tickers=()):
         review_date=date,
         source=f"{doc_type}.pdf",
         chunk_id=f"{doc_type}-{date}-c{n:03d}",
-        parent_id=f"{doc_type}-{date}-s{n:03d}",
         section=section,
         pages=(1,),
-        tickers=tickers,
-        start_index=0,
     )
 
 
 DAILY_V1 = [
-    _chunk("Micron memory HBM DRAM shortage capex", section="Memory", tickers=("MU",)),
+    _chunk("Micron memory HBM DRAM shortage capex", section="Memory"),
     _chunk("Iran oil Oman risk premium macro", section="Macro"),
     _chunk("AI infrastructure capex hyperscalers", section="AI"),
 ]
@@ -76,9 +73,11 @@ def test_search_returns_most_relevant_chunk_with_payload():
     top = hits[0]
     assert "Micron" in top.text
     assert top.section == "Memory"
-    assert top.tickers == ("MU",)
+    assert top.source == "daily.pdf"
+    assert top.chunk_id.startswith("daily-")
     assert top.doc_type == "daily"
     assert top.review_date == "2026-07-08"
+    assert top.pages == (1,)
 
 
 def test_user_filter_isolates_corpora():
@@ -86,12 +85,11 @@ def test_user_filter_isolates_corpora():
     idx = _index()
     idx.replace_document(DAILY_V1, user_id="alex")
     idx.replace_document(
-        [_chunk("Palladium squeeze synthetic demo note", tickers=("PALL",))],
+        [_chunk("Palladium squeeze synthetic demo note")],
         user_id="demo",
     )
 
     alex_hits = idx.search("palladium squeeze", user_id="alex", k=5)
-    assert all(h.tickers != ("PALL",) for h in alex_hits)
     assert "Palladium" not in " ".join(h.text for h in alex_hits)
 
     demo_hits = idx.search("palladium squeeze", user_id="demo", k=5)
@@ -109,7 +107,7 @@ def test_replace_on_upload_swaps_same_doc_type_only():
 
     # New daily upload replaces the old daily, leaves the weekly intact.
     result = idx.replace_document(
-        [_chunk("Fresh daily note nvidia guidance", date="2026-07-09", tickers=("NVDA",))],
+        [_chunk("Fresh daily note nvidia guidance", date="2026-07-09")],
         user_id="alex",
     )
     assert result.replaced is True

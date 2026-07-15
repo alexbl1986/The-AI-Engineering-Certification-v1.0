@@ -40,6 +40,28 @@ def _yahoo_fetch(yahoo_symbol: str) -> RawQuote | None:
     }
 
 
+def quote_yahoo_symbol(
+    yahoo_symbol: str, fetch: Callable[[str], RawQuote | None] = _yahoo_fetch
+) -> Quote:
+    """Quote a bare Yahoo symbol (index/ETF/stock: `^VIX`, `SPY`, `QQQ`).
+
+    The market-regime path has no `Position` to cross-check a currency against,
+    so this skips that guard but keeps everything else `get_quote` promises:
+    fail-loud on no quote, and the price's own timestamp + market state so a
+    stale close can never pass for a live tick.
+    """
+    raw = fetch(yahoo_symbol)
+    if raw is None or raw.get("price") is None:
+        raise ValueError(f"no quote available for {yahoo_symbol!r} (delisted or bad symbol?)")
+    return Quote(
+        symbol=yahoo_symbol,
+        price=float(raw["price"]),
+        currency=str(raw["currency"]),
+        as_of=datetime.fromtimestamp(int(raw["epoch"]), tz=timezone.utc),
+        market_state=str(raw["market_state"]),
+    )
+
+
 def get_quote(
     position: Position,
     listing_exch: str | None = None,

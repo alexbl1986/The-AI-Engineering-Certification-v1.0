@@ -8,9 +8,36 @@ returns to zero. Contract identity is the raw symbol, so different expiries
 
 from __future__ import annotations
 
+from dataclasses import replace
 from itertools import groupby
 
-from app.trading.domain import Campaign, Trade
+from app.trading.domain import Campaign, Split, Trade
+
+
+def apply_splits(trades: list[Trade], splits: list[Split]) -> list[Trade]:
+    """Restate pre-split fills in post-split terms (quantity x ratio, price / ratio).
+
+    IBKR reports each fill at its historical share count, but the split itself
+    lives only in the Corporate Actions section — unapplied, a campaign that
+    straddles a split miscounts its net quantity and prices today's shares off
+    a pre-split entry. Cash columns (proceeds, commission, basis, realized P/L)
+    stay untouched: a split moves no money. Stocks only — option contracts
+    carry their own OCC adjustments under their own symbols.
+    """
+    adjusted = list(trades)
+    for split in sorted(splits, key=lambda s: s.effective):
+        ratio = split.numerator / split.denominator
+        adjusted = [
+            replace(t, quantity=t.quantity * ratio, price=t.price / ratio)
+            if (
+                t.asset_category == "Stocks"
+                and t.root_ticker == split.symbol
+                and t.timestamp < split.effective
+            )
+            else t
+            for t in adjusted
+        ]
+    return adjusted
 
 
 def group_campaigns(trades: list[Trade]) -> list[Campaign]:

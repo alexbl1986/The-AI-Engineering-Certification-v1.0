@@ -19,7 +19,7 @@ from typing import Protocol, Sequence
 from qdrant_client import QdrantClient
 from qdrant_client import models
 
-from app.rag.chunk import Chunk, Parent
+from app.rag.chunk import Chunk
 
 COLLECTION = "desk_reviews"
 OPENAI_3_LARGE_DIM = 3072
@@ -50,11 +50,8 @@ class SearchHit:
     review_date: str | None
     source: str
     chunk_id: str
-    parent_id: str
     section: str | None
     pages: tuple[int, ...]
-    tickers: tuple[str, ...]
-    start_index: int
     score: float
 
 
@@ -89,20 +86,12 @@ class CorpusIndex:
                 ),
             )
 
-    def replace_document(
-        self,
-        chunks: Sequence[Chunk],
-        parents: Sequence[Parent] | None = None,
-        *,
-        user_id: str,
-    ) -> IndexResult:
+    def replace_document(self, chunks: Sequence[Chunk], *, user_id: str) -> IndexResult:
         """Replace this user's document of the incoming type.
 
-        Indexes the retrieval ``chunks`` (children) and, if supplied, their
-        ``parents`` (full sections, tagged ``kind="parent"``) so parent-child
-        recovery can fetch them by id. All chunks must share one ``doc_type``.
-        Emits a warning if the upload's review date is older than the one it
-        replaces — an explicit upload still wins, but the staleness is surfaced.
+        All chunks must share one ``doc_type``. Emits a warning if the upload's
+        review date is older than the one it replaces — an explicit upload
+        still wins, but the staleness is surfaced.
         """
         if not chunks:
             raise ValueError("replace_document requires at least one chunk")
@@ -121,11 +110,9 @@ class CorpusIndex:
             )
 
         self._delete(user_id, doc_type)
-
-        points = self._child_points(user_id, chunks)
-        if parents:
-            points += self._parent_points(user_id, parents)
-        self._client.upsert(collection_name=self._collection, points=points)
+        self._client.upsert(
+            collection_name=self._collection, points=self._points(user_id, chunks)
+        )
 
         return IndexResult(
             doc_type=doc_type,
@@ -136,25 +123,25 @@ class CorpusIndex:
         )
 
     def search(self, query: str, *, user_id: str, k: int = 5) -> list[SearchHit]:
-        """Dense top-``k`` search over only this user's *child* chunks."""
+        """Dense top-``k`` search over only this user's chunks."""
         vector = self._embedder.embed_query(query)
         result = self._client.query_points(
             collection_name=self._collection,
             query=vector,
-            query_filter=self._user_filter(user_id, kind="child"),
+            query_filter=self._user_filter(user_id),
             limit=k,
             with_payload=True,
         )
         return [_to_hit(p.payload, p.score) for p in result.points]
 
-    def all_children(self, *, user_id: str) -> list[SearchHit]:
-        """Every child chunk for a user (score 0.0) — the BM25 corpus source."""
+    def all_chunks(self, *, user_id: str) -> list[SearchHit]:
+        """Every chunk for a user (score 0.0) — the BM25 corpus source."""
         docs: list[SearchHit] = []
         offset = None
         while True:
             points, offset = self._client.scroll(
                 collection_name=self._collection,
-                scroll_filter=self._user_filter(user_id, kind="child"),
+                scroll_filter=self._user_filter(user_id),
                 limit=256,
                 offset=offset,
                 with_payload=True,
@@ -164,19 +151,9 @@ class CorpusIndex:
                 break
         return docs
 
-    def get_parents(
-        self, parent_ids: Sequence[str], *, user_id: str
-    ) -> dict[str, SearchHit]:
-        """Look up parents by id (score 0.0), for parent-child recovery."""
-        ids = [str(uuid.uuid5(_POINT_NS, f"{user_id}:{pid}")) for pid in parent_ids]
-        records = self._client.retrieve(
-            collection_name=self._collection, ids=ids, with_payload=True
-        )
-        return {r.payload["parent_id"]: _to_hit(r.payload, 0.0) for r in records}
-
     # -- internals --------------------------------------------------------
 
-    def _child_points(
+    def _points(
         self, user_id: str, chunks: Sequence[Chunk]
     ) -> list[models.PointStruct]:
         vectors = self._embedder.embed_documents([c.text for c in chunks])
@@ -186,50 +163,20 @@ class CorpusIndex:
                 vector=vector,
                 payload={
                     "user_id": user_id,
-                    "kind": "child",
                     "text": c.text,
                     "doc_type": c.doc_type,
                     "review_date": c.review_date,
                     "source": c.source,
                     "chunk_id": c.chunk_id,
-                    "parent_id": c.parent_id,
                     "section": c.section,
                     "pages": list(c.pages),
-                    "tickers": list(c.tickers),
-                    "start_index": c.start_index,
                 },
             )
             for c, vector in zip(chunks, vectors)
         ]
 
-    def _parent_points(
-        self, user_id: str, parents: Sequence[Parent]
-    ) -> list[models.PointStruct]:
-        vectors = self._embedder.embed_documents([p.text for p in parents])
-        return [
-            models.PointStruct(
-                id=str(uuid.uuid5(_POINT_NS, f"{user_id}:{p.parent_id}")),
-                vector=vector,
-                payload={
-                    "user_id": user_id,
-                    "kind": "parent",
-                    "text": p.text,
-                    "doc_type": p.doc_type,
-                    "review_date": p.review_date,
-                    "source": p.source,
-                    "chunk_id": "",
-                    "parent_id": p.parent_id,
-                    "section": p.section,
-                    "pages": list(p.pages),
-                    "tickers": list(p.tickers),
-                    "start_index": 0,
-                },
-            )
-            for p, vector in zip(parents, vectors)
-        ]
-
     def _user_filter(
-        self, user_id: str, doc_type: str | None = None, kind: str | None = None
+        self, user_id: str, doc_type: str | None = None
     ) -> models.Filter:
         must = [
             models.FieldCondition(
@@ -241,10 +188,6 @@ class CorpusIndex:
                 models.FieldCondition(
                     key="doc_type", match=models.MatchValue(value=doc_type)
                 )
-            )
-        if kind is not None:
-            must.append(
-                models.FieldCondition(key="kind", match=models.MatchValue(value=kind))
             )
         return models.Filter(must=must)
 
@@ -273,10 +216,7 @@ def _to_hit(payload: dict, score: float) -> SearchHit:
         review_date=payload.get("review_date"),
         source=payload.get("source", ""),
         chunk_id=payload.get("chunk_id", ""),
-        parent_id=payload.get("parent_id", ""),
         section=payload.get("section"),
         pages=tuple(payload.get("pages", [])),
-        tickers=tuple(payload.get("tickers", [])),
-        start_index=payload.get("start_index", 0),
         score=score,
     )

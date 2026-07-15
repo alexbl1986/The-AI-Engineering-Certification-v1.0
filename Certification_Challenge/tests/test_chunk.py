@@ -6,11 +6,9 @@ import pytest
 
 from app.rag.chunk import (
     _MIN_CHUNK_CHARS,
-    _extract_tickers,
     _split_into_sections,
     _split_long,
     chunk_document,
-    parent_documents,
 )
 from app.rag.extract import Line
 
@@ -40,7 +38,7 @@ def test_chunk_invariants(path, doc_type, review_date, pages):
         assert c.doc_type == doc_type
         assert c.review_date == review_date
         assert c.source == path.name
-        assert c.chunk_id and c.parent_id  # stable ids for RRF / parent recovery
+        assert c.chunk_id  # stable id for RRF dedup and tracing
         assert c.pages and all(1 <= p <= pages for p in c.pages)
         assert all(phrase not in c.text for phrase in BOILERPLATE)  # no furniture
         if c.section:  # heading is injected into the searchable text
@@ -51,24 +49,11 @@ def test_chunk_invariants(path, doc_type, review_date, pages):
     assert with_section >= 0.8 * len(chunks)
 
 
-@pytest.mark.parametrize("path", [DAILY, WEEKLY])
-def test_parents_cover_children_and_carry_heading(path):
-    parents = parent_documents(str(path))
-    children = chunk_document(str(path))
-    parent_ids = {p.parent_id for p in parents}
-
-    # Every child links back to a real parent section.
-    assert all(c.parent_id in parent_ids for c in children)
-    # Each parent's heading is in its own searchable text.
-    assert all(p.section in p.text for p in parents if p.section)
-
-
-def test_ticker_whitelist_filters_candidates():
-    whitelist = {"MU", "VIX", "AI"}
-    chunks = chunk_document(str(WEEKLY), ticker_whitelist=whitelist)
-    found = {t for c in chunks for t in c.tickers}
-    assert found <= whitelist
-    assert "MU" in found  # Micron is discussed in the weekly
+def test_table_rows_stay_bound_inside_chunks():
+    # The weekly action-map rows arrive as pipe-joined lines; a chunk must
+    # keep a name on the same row as its desk action.
+    chunks = chunk_document(str(WEEKLY))
+    assert any("AMKR" in c.text and "ליבה" in c.text and " | " in c.text for c in chunks)
 
 
 def _line(text, size, page=1):
@@ -110,10 +95,3 @@ def test_split_long_breaks_at_whitespace_within_budget():
     assert len(pieces) > 1
     assert all(len(p) <= 1200 for p in pieces)
     assert " ".join(pieces).split() == text.split()  # no content lost
-
-
-def test_extract_tickers_respects_whitelist():
-    text = "MU and VIX up, AAOI flat, notagood ONE"
-    assert _extract_tickers(text, {"MU", "VIX"}) == ("MU", "VIX")
-    # No whitelist -> all upper-case runs are candidates.
-    assert "AAOI" in _extract_tickers(text, None)

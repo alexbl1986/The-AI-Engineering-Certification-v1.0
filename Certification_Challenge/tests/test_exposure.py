@@ -27,11 +27,11 @@ def _stock(symbol, value, fx=1.0, currency="USD"):
     )
 
 
-def _option(symbol, value, fx=1.0, currency="USD"):
+def _option(symbol, value, fx=1.0, currency="USD", right="C"):
     return Position(
         symbol=symbol, asset_class="OPT", currency=currency, fx_rate_to_base=fx,
         quantity=10.0, mark_price=value / 10.0, position_value=value,
-        strike=50.0, right="C",
+        strike=50.0, right=right,
     )
 
 
@@ -63,6 +63,86 @@ def test_options_over_limit_breach_flagged():
     report = check_exposure([_option("AAPL", 20000.0)], nav=100000.0)
     assert report.checks[0].pct_of_nav == 0.20
     assert report.checks[0].within_policy is False
+
+
+# --- existing-holding cap: no single name above position_cap % of NAV ---
+
+
+def test_holding_over_cap_is_flagged_and_under_cap_names_are_not():
+    # GOOGL at 10,800 of 120,000 NAV = 9% > the 6% cap -> flagged; AEHR at 2.5%
+    # stays silent (only breaches surface, the digest must not list every name).
+    positions = [_stock("GOOGL", 10800.0), _stock("AEHR", 3000.0)]
+
+    report = check_exposure(positions, nav=120000.0, position_cap=0.06)
+
+    (check,) = [c for c in report.checks if c.label.endswith("holding")]
+    assert check.label == "GOOGL holding"
+    assert check.pct_of_nav == pytest.approx(0.09)
+    assert check.limit == 0.06
+    assert check.within_policy is False
+
+
+def test_holding_cap_aggregates_stock_and_options_per_symbol():
+    # A "holding" is the whole name: GOOGL stock + GOOGL options together
+    # (6,000 + 2,000 = 8,000 of 100,000 NAV = 8% > 6%).
+    positions = [_stock("GOOGL", 6000.0), _option("GOOGL", 2000.0)]
+
+    report = check_exposure(positions, nav=100000.0, position_cap=0.06)
+
+    (check,) = [c for c in report.checks if c.label == "GOOGL holding"]
+    assert check.value_base == pytest.approx(8000.0)
+    assert check.pct_of_nav == pytest.approx(0.08)
+
+
+def test_no_position_cap_requested_adds_no_holding_checks():
+    report = check_exposure([_stock("GOOGL", 10800.0)], nav=120000.0)
+    assert [c.label for c in report.checks] == ["options"]
+
+
+# --- hedge ratio: put value / call value vs the policy band (his formula) ---
+
+
+def test_hedge_ratio_within_band():
+    # puts 1,200 / calls 10,000 = 12% -> inside the 10-15% band.
+    positions = [_option("SPY", 10000.0), _option("SPY", 1200.0, right="P")]
+    report = check_exposure(positions, nav=150000.0, hedge_low=0.10, hedge_high=0.15)
+    assert report.hedge.ratio == pytest.approx(0.12)
+    assert report.hedge.status == "within"
+
+
+def test_all_calls_book_is_under_hedged():
+    # His real failure mode: a book of calls with no puts -> 0% hedge, under band.
+    report = check_exposure([_option("AAPL", 10000.0)], nav=150000.0,
+                            hedge_low=0.10, hedge_high=0.15)
+    assert report.hedge.ratio == 0.0
+    assert report.hedge.status == "under"
+
+
+def test_over_hedged_is_flagged():
+    positions = [_option("SPY", 10000.0), _option("SPY", 2000.0, right="P")]
+    report = check_exposure(positions, nav=150000.0, hedge_low=0.10, hedge_high=0.15)
+    assert report.hedge.status == "over"
+
+
+def test_no_calls_omits_the_hedge_check():
+    # No denominator: a puts-only book gets no ratio rather than a division blowup.
+    report = check_exposure([_option("SPY", 2000.0, right="P")], nav=150000.0,
+                            hedge_low=0.10, hedge_high=0.15)
+    assert report.hedge is None
+
+
+def test_short_option_lines_count_by_absolute_value():
+    # A short call (negative position_value) is still call-side exposure.
+    positions = [
+        _option("SPY", 10000.0), _option("ZETA", -1000.0), _option("SPY", 1200.0, right="P"),
+    ]
+    report = check_exposure(positions, nav=150000.0, hedge_low=0.10, hedge_high=0.15)
+    assert report.hedge.call_value_base == 11000.0
+
+
+def test_hedge_band_not_requested_reports_none():
+    report = check_exposure([_option("AAPL", 12000.0)], nav=150000.0)
+    assert report.hedge is None
 
 
 def test_no_nav_refuses_with_missing_data():

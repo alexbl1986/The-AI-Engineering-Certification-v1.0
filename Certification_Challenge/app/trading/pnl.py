@@ -59,12 +59,15 @@ def open_position_pnl(
         # (mark - entry)/mark yields the native-currency P/L without re-deriving
         # the contract multiplier. fx_rate_to_base normalizes to USD.
         unrealized_native = pos.position_value * (pos.mark_price - entry) / pos.mark_price
+        # The ratio is quoted from the position's side: a short leg gains as the
+        # mark falls (the signed position_value already handles the dollars).
+        gain = pos.mark_price / entry - 1
         lines.append(
             PositionPnL(
                 symbol=pos.symbol,
                 avg_entry_price=entry,
                 mark_price=pos.mark_price,
-                gain=pos.mark_price / entry - 1,
+                gain=-gain if pos.quantity < 0 else gain,
                 unrealized_pl=unrealized_native * pos.fx_rate_to_base,
                 cost_basis_source=source,
             )

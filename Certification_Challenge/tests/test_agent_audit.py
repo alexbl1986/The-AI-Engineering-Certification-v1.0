@@ -33,6 +33,12 @@ def test_extract_handles_thousands_and_negatives():
     assert ("$", -1200.0) in extract_figures("realized -$1,200 so far")
 
 
+def test_extract_handles_sign_after_dollar():
+    # The digest's own formatter historically emitted "$-20,186"; the extractor
+    # must parse it, or every negative dollar in the grounding is unauditable.
+    assert ("$", -20186.0) in extract_figures("total unrealized: $-20,186 across 60")
+
+
 # --- backing check -------------------------------------------------------
 
 
@@ -50,9 +56,48 @@ def test_audit_flags_a_fabricated_figure():
 
 
 def test_audit_tolerates_rounding_within_evidence():
-    # $14,698 backs "$14,700" (within 2%); a desk "25%" quote backs a 25% mention.
+    # $14,698 backs "$14,700" (tight rounding); a desk "25%" quote backs a 25% mention.
     grounding = "total unrealized: $14,698\ndesk notes 25% growth"
     assert audit_answer("up ~$14,700, desk sees 25%.", grounding).ok
+
+
+def test_audit_backs_prose_that_drops_the_sign():
+    # Trace-replay regression: "down $20,186" was flagged as fabricated although
+    # the digest carried the figure as -$20,186. Prose legitimately drops signs
+    # ("a loss of $X"), so dollars match on absolute value.
+    grounding = "### Unrealized P/L\n- total unrealized: -$20,186 across 60 priced positions"
+    assert audit_answer("You're down $20,186 overall.", grounding).ok
+    assert audit_answer("unrealized P/L is -$20,186.", grounding).ok
+
+
+def test_audit_rejects_loose_rounding():
+    # 2% tolerance let "$165,000" pass against a $162,528 NAV; 0.5% must not.
+    assert not audit_answer("NAV is about $165,000.", "account NAV: $162,528").ok
+
+
+# --- digest/extractor contract -------------------------------------------
+
+
+def test_every_digest_figure_is_extractable():
+    # The audit can only back what it can parse: every $ the digest formatter
+    # emits (negative P/L included) must round-trip through extract_figures.
+    from app.graphs.trading_assistant.answer import build_facts
+    from app.graphs.trading_assistant.state import EvidenceItem
+    from app.trading.domain import PositionPnL, UnrealizedPnLReport
+
+    report = UnrealizedPnLReport(
+        total_unrealized_pl=-20186.39,
+        lines=(
+            PositionPnL(
+                symbol="SMTOY", avg_entry_price=88.53, mark_price=8.22,
+                gain=-0.907, unrealized_pl=-19274.4,
+            ),
+        ),
+    )
+    digest, _ = build_facts(
+        [EvidenceItem("open_position_pnl", ok=True, result=report)], []
+    )
+    assert ("$", -20186.0) in extract_figures(digest)
 
 
 # --- audit node ----------------------------------------------------------

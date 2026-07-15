@@ -15,7 +15,9 @@ from app.rag.extract import (
     Span,
     detect_doc_type,
     detect_review_date,
+    extract_lines,
     extract_spans,
+    modal_body_size,
     page_count,
 )
 
@@ -57,3 +59,42 @@ def test_detects_bold_headings():
     spans = extract_spans(str(DAILY))
     body = max(s.size for s in spans)
     assert any(s.bold for s in spans if s.size == body)
+
+
+# --- table serialization ------------------------------------------------
+# The reviews carry their name→action calls in layout tables; naive layout-
+# order extraction shreds the row structure. Tables must come out as one
+# pipe-joined line per row, cells in RTL reading order, and the raw table
+# fragments must not leak into the prose line flow.
+
+
+def _table_rows(path):
+    return [line for line in extract_lines(str(path)) if " | " in line.text]
+
+
+def test_weekly_action_map_rows_bind_names_to_buckets():
+    rows = _table_rows(WEEKLY)
+    assert any("AMKR" in r.text and "ליבה" in r.text for r in rows)
+    assert any("RKLB" in r.text and "Policy beta" in r.text for r in rows)
+
+
+def test_table_header_row_reads_right_to_left():
+    # Logical first column (rightmost on the page) must serialize first.
+    rows = _table_rows(WEEKLY)
+    assert any("דלי פעולה | מה עושים | שמות" in r.text for r in rows)
+
+
+def test_daily_stock_map_rows_bind_layers_to_names():
+    rows = _table_rows(DAILY)
+    assert any("Agentic Internet" in r.text and "DDOG" in r.text for r in rows)
+
+
+def test_table_text_absent_from_prose_lines():
+    prose = [l for l in extract_lines(str(WEEKLY)) if " | " not in l.text]
+    assert not [l.text for l in prose if "SMH partial trims" in l.text]
+
+
+def test_table_rows_never_classify_as_headings():
+    threshold = modal_body_size(extract_spans(str(WEEKLY))) + 2.0
+    assert _table_rows(WEEKLY)
+    assert all(l.size < threshold for l in _table_rows(WEEKLY))

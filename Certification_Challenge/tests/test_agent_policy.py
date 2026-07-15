@@ -35,7 +35,7 @@ def test_apply_change_sets_field_and_bumps_version():
 
 def test_normalize_coerces_percent_as_integer():
     assert normalize_value("options_limit", 12) == 0.12  # nav_fraction
-    assert normalize_value("moonshot_trigger", 150) == 1.5  # gain_ratio
+    assert normalize_value("scale_out_second", 200) == 2.0  # gain_ratio
     assert normalize_value("options_limit", 0.12) == 0.12  # already native
 
 
@@ -134,6 +134,90 @@ def test_unrecognized_change_asks_which_rule_without_interrupt():
     first, _ = _invoke(graph, text="make my rules better")
     assert "__interrupt__" not in first
     assert "couldn't tell which rule" in first["messages"][-1].content
+
+
+# --- co-intents: the non-policy half of the question is still answered ---
+
+
+def test_policy_co_intents_continue_into_a_grounded_answer():
+    # "Raise my options cap to 12% AND am I within policy?" — after the gate,
+    # the status half must be answered, against the NEW limit.
+    store: dict = {}
+    stub = _Stub(
+        scope=Scope(intents=["policy_change", "status_check"]),
+        policy_change=PolicyChange(
+            recognized=True, field="options_limit", new_value=0.12,
+            summary="Set options exposure cap to 12%",
+        ),
+        answer="With the new cap you're within policy.",
+    )
+    ctx = AgentContext(
+        chat_model=stub,
+        load_positions=lambda u: [_opt_position()],
+        load_trades=lambda u: MissingData("ledger", "Upload a recent activity statement."),
+        load_nav=lambda u: 100_000.0,
+        load_policy=lambda u: store.get(u, DEFAULT_POLICY),
+        save_policy=lambda u, p: store.__setitem__(u, p),
+        default_user_id="alex",
+    )
+    graph = build_graph(ctx, checkpointer=MemorySaver())
+    cfg = {"configurable": {"thread_id": "t1"}}
+    first = graph.invoke(
+        {
+            "messages": [HumanMessage(content="raise my cap to 12% — am I within policy?")],
+            "user_id": "alex",
+        },
+        cfg,
+    )
+    assert "__interrupt__" in first
+    resumed = graph.invoke(Command(resume=True), cfg)
+
+    exposure = next(it for it in resumed["evidence"] if it.tool == "check_exposure")
+    assert exposure.result.checks[0].limit == 0.12  # answered against the NEW cap
+    replies = [m.content for m in resumed["messages"] if isinstance(m, AIMessage)]
+    assert any("Updated" in r for r in replies)  # the write confirmation
+    # The answer (plus the legitimate ledger upload-ask for this fixture).
+    assert replies[-1].startswith("With the new cap you're within policy.")
+
+
+def test_unrecognized_change_with_co_intents_still_answers():
+    # The observed misroute: "what's my current policy?" tagged policy_change +
+    # status_check. The gate can't parse a change (correctly), but that must not
+    # dead-end the run — the status half still gets a grounded answer, and the
+    # "which rule?" ask rides along as a note instead of replacing the answer.
+    store: dict = {}
+    stub = _Stub(
+        scope=Scope(intents=["policy_change", "status_check"]),
+        policy_change=PolicyChange(recognized=False),
+        answer="All within policy.",
+    )
+    ctx = AgentContext(
+        chat_model=stub,
+        load_positions=lambda u: [_opt_position()],
+        load_trades=lambda u: MissingData("ledger", "Upload a recent activity statement."),
+        load_nav=lambda u: 100_000.0,
+        load_policy=lambda u: store.get(u, DEFAULT_POLICY),
+        save_policy=lambda u, p: store.__setitem__(u, p),
+        default_user_id="alex",
+    )
+    graph = build_graph(ctx, checkpointer=MemorySaver())
+    out = graph.invoke(
+        {"messages": [HumanMessage(content="what's my current policy?")], "user_id": "alex"},
+        {"configurable": {"thread_id": "t1"}},
+    )
+    assert "__interrupt__" not in out  # nothing to approve
+    assert store == {}  # and certainly no write
+    assert any(it.tool == "check_exposure" for it in out["evidence"])  # prefetch ran
+    assert out["messages"][-1].content.startswith("All within policy.")  # answered
+    assert "which rule" in (out.get("policy_note") or "")  # the ask rides along
+
+
+def test_policy_only_intent_still_ends_after_the_gate():
+    store: dict = {}
+    graph = _cap_change_graph(store)
+    _, cfg = _invoke(graph)
+    resumed = graph.invoke(Command(resume=True), cfg)
+    assert "evidence" not in resumed or not resumed["evidence"]  # no follow-on fetch
 
 
 # --- loop closure: a cap change reaches the exposure check ---------------

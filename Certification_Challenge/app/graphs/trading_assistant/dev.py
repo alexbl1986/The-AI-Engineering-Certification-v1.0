@@ -28,11 +28,24 @@ from qdrant_client import QdrantClient
 from app.graphs.trading_assistant.deps import AgentContext
 from app.graphs.trading_assistant.graph import build_graph
 from app.graphs.trading_assistant.policy_model import DEFAULT_POLICY, PolicyRecord
-from app.rag.chunk import chunk_document, parent_documents
+from app.graphs.trading_assistant.tools import (
+    make_desk_search_tool,
+    make_market_quote_tool,
+    make_search_web_tool,
+    make_size_signal_tool,
+)
+from app.rag.chunk import chunk_document
 from app.rag.index import OPENAI_3_LARGE_DIM, CorpusIndex, openai_embedder
 from app.rag.retrieve import HybridRetriever
 from app.trading.domain import MissingData
-from app.trading.ingest.statement import parse_account_nav, parse_activity_statement
+from app.trading.ingest.statement import (
+    parse_account_nav,
+    parse_activity_statement,
+    parse_open_positions_cost,
+    parse_splits,
+    parse_statement_as_of,
+)
+from app.trading.ledger import apply_splits
 from app.trading.ingest.tactical import parse_tactical_book
 
 load_dotenv()
@@ -76,9 +89,7 @@ def _build_retriever(user_id: str) -> HybridRetriever | None:
             vector_size=OPENAI_3_LARGE_DIM,
         )
         for pdf in pdfs:
-            index.replace_document(
-                chunk_document(str(pdf)), parent_documents(str(pdf)), user_id=user_id
-            )
+            index.replace_document(chunk_document(str(pdf)), user_id=user_id)
         return HybridRetriever(index)
     except Exception as exc:  # noqa: BLE001 - dev convenience: start even offline
         print(f"[dev] retriever unavailable ({exc!r}); desk questions will cold-start")
@@ -94,7 +105,11 @@ def _positions_loader():
 
 def _trades_loader():
     content = _read(_STATEMENT_CSV)
-    trades = parse_activity_statement(content) if content else None
+    trades = (
+        apply_splits(parse_activity_statement(content), parse_splits(content))
+        if content
+        else None
+    )
     missing = MissingData("ledger", "Upload a recent activity statement.")
     return lambda user_id: trades if trades is not None else missing
 
@@ -105,19 +120,68 @@ def _nav_loader():
     return lambda user_id: nav
 
 
+def _as_of_loader():
+    content = _read(_STATEMENT_CSV)
+    as_of = parse_statement_as_of(content) if content else None
+    return lambda user_id: as_of
+
+
+def _entry_fallback_loader():
+    content = _read(_STATEMENT_CSV)
+    costs = parse_open_positions_cost(content) if content else {}
+    return lambda user_id: costs
+
+
+def _build_agent_tools(retriever, positions_loader, nav_loader, policy_loader):
+    """The answering agent's live roster: quotes always (yfinance needs no key),
+    signal sizing always (NAV-gated inside the tool), desk retrieval when the
+    reviews indexed, Tavily web search only when its key is present. A missing
+    piece just shrinks the roster."""
+    tools = [
+        make_market_quote_tool(),
+        make_size_signal_tool(
+            user_id=DEV_USER,
+            load_nav=nav_loader,
+            load_policy=policy_loader,
+            load_positions=positions_loader,
+        ),
+    ]
+    if retriever is not None:
+        tools.append(
+            make_desk_search_tool(
+                retriever, user_id=DEV_USER, load_positions=positions_loader
+            )
+        )
+    if os.environ.get("TAVILY_API_KEY"):
+        try:
+            from langchain_tavily import TavilySearch
+
+            tools.append(make_search_web_tool(TavilySearch(max_results=3)))
+        except Exception as exc:  # noqa: BLE001 - dev convenience: start without web
+            print(f"[dev] Tavily unavailable ({exc!r}); web search disabled")
+    return tools
+
+
 # In-process policy store: persists across turns within one `langgraph dev` run.
 # The deploy build swaps this for the LangGraph Store / Postgres, same seam.
 _POLICY: dict[str, PolicyRecord] = {}
 
 
 def dev_context() -> AgentContext:
+    positions_loader = _positions_loader()
+    nav_loader = _nav_loader()
+    policy_loader = lambda user_id: _POLICY.get(user_id, DEFAULT_POLICY)  # noqa: E731
     return AgentContext(
         chat_model=gateway_chat_model(),
-        retriever=_build_retriever(DEV_USER),
-        load_positions=_positions_loader(),
+        agent_tools=_build_agent_tools(
+            _build_retriever(DEV_USER), positions_loader, nav_loader, policy_loader
+        ),
+        load_positions=positions_loader,
         load_trades=_trades_loader(),
-        load_nav=_nav_loader(),
-        load_policy=lambda user_id: _POLICY.get(user_id, DEFAULT_POLICY),
+        load_nav=nav_loader,
+        load_as_of=_as_of_loader(),
+        load_entry_fallback=_entry_fallback_loader(),
+        load_policy=policy_loader,
         save_policy=lambda user_id, policy: _POLICY.__setitem__(user_id, policy),
         default_user_id=DEV_USER,
     )

@@ -1,16 +1,20 @@
-"""Deterministic pre-fetch by route (ADR-0006, step 2).
+"""Deterministic pre-fetch (ADR-0006 step 2, revised: CSV computations ONLY).
 
-The calls that *must* happen for a route are graph code, not LLM discretion:
-status/rebalance always run exposure + scale-out + P/L over the snapshot;
-desk questions always retrieve; trade history reads the ledger. Multi-label
-intent fetches the union. Every call's outcome lands in the evidence table, and
-a store that was never uploaded surfaces as `MissingData` (cold-start contract)
-rather than a silent empty result — so synthesis can answer what it can and name
-the missing upload, and the audit node can block any number with no backing.
+The book tools (exposure, scale-out, P/L, positions; campaigns when a ticker is
+named) run on EVERY turn that reaches this node — they are milliseconds over the
+snapshot/ledger, and gating them by intent created a route-mapping bug class
+(a route forgotten in the fetch table silently became a stub). The clean seam:
+this node does pure functions over the uploaded files; anything that touches an
+index or the network (desk retrieval, quotes, web) is a tool the answering
+agent calls itself.
 
-Live-quote / technical / web enrichment are the tool agent's job (the long tail,
-a later slice): exposure, scale-out and P/L are self-contained on the snapshot's
-own marks, so they need no network here.
+Every call's outcome lands in the evidence table, and a store that was never
+uploaded surfaces as `MissingData` (cold-start contract) rather than a silent
+empty result — so the answer can cover what it can and name the missing upload,
+and the audit node can block any number with no backing. Intent gates only
+which `MissingData` items surface as upload asks, so a desk-only question is
+never nagged about the statement it doesn't need. (The desk-reviews cold-start
+ask travels with the `search_desk_reviews` tool, not this node.)
 """
 
 from __future__ import annotations
@@ -25,19 +29,28 @@ from app.graphs.trading_assistant.deps import (
 )
 from app.graphs.trading_assistant.policy_model import DEFAULT_POLICY
 from app.graphs.trading_assistant.state import AgentState, EvidenceItem, Scope
-from app.graphs.trading_assistant.util import latest_user_text
 from app.trading.domain import MissingData, Position, Trade
 from app.trading.exposure import check_exposure
 from app.trading.ledger import get_trades
+from app.trading.performance import performance_summary
 from app.trading.pnl import open_position_pnl
 from app.trading.scaleout import scan_scaleout
 
-_PORTFOLIO_INTENTS = {"status_check", "rebalance_advice"}
-
-# The daily briefing is a composition: it runs the portfolio checks AND pulls a
-# desk summary. Since a briefing has no specific question, the desk retrieval uses
-# a standing summary query rather than the trigger phrase ("morning briefing").
-BRIEFING_QUERY = "market outlook, key risks, sector positioning, and hedging guidance for today"
+# Which stores each route actually NEEDS — used only to decide which missing
+# stores surface as upload asks, never to decide what runs.
+_BOOK_STORES = frozenset({"positions snapshot", "ledger", "statement NAV"})
+_STORES_BY_INTENT: dict[str, frozenset[str]] = {
+    "status_check": _BOOK_STORES,
+    "rebalance_advice": _BOOK_STORES,
+    "daily_briefing": _BOOK_STORES,
+    "performance_review": frozenset({"ledger"}),
+    "trade_history": frozenset({"ledger"}),
+    "desk_question": frozenset(),
+    "trade_signal_eval": _BOOK_STORES,  # sizing needs NAV; inventory needs the book
+    "market_regime": frozenset(),
+    "policy_change": frozenset(),
+    "off_topic": frozenset(),
+}
 
 
 def make_prefetch_node(context: AgentContext) -> Callable[[AgentState], dict]:
@@ -47,7 +60,6 @@ def make_prefetch_node(context: AgentContext) -> Callable[[AgentState], dict]:
         scope: Scope = state["scope"]
         user_id = state.get("user_id") or context.default_user_id
         intents = set(scope.intents)
-        query = latest_user_text(state["messages"])
 
         positions = _load(
             context.load_positions,
@@ -61,24 +73,39 @@ def make_prefetch_node(context: AgentContext) -> Callable[[AgentState], dict]:
         )
         nav = context.load_nav(user_id) if context.load_nav else None
         policy = context.load_policy(user_id) if context.load_policy else DEFAULT_POLICY
+        entry_fallback = (
+            context.load_entry_fallback(user_id) if context.load_entry_fallback else {}
+        )
 
-        # A briefing needs the whole book picture plus the desk's read, so it runs
-        # the union of the portfolio and desk fetches. Flags dedupe multi-label
-        # requests so each capability runs at most once.
-        briefing = "daily_briefing" in intents
-        run_portfolio = bool(intents & _PORTFOLIO_INTENTS) or briefing
-        run_desk = "desk_question" in intents or briefing
-
+        # The book always runs; a named ticker always pulls its campaign; only
+        # desk retrieval is gated (it needs a query to exist).
         evidence: list[EvidenceItem] = []
-        if run_portfolio:
-            evidence += _portfolio_prefetch(positions, trades, nav, policy.options_limit)
-        if "trade_history" in intents:
+        as_of = context.load_as_of(user_id) if context.load_as_of else None
+        if as_of is not None:
+            evidence.append(EvidenceItem("statement_as_of", ok=True, result=as_of))
+        evidence += _portfolio_prefetch(positions, trades, nav, policy, entry_fallback)
+        # The rulebook itself is evidence: policy exists from day one (seeded
+        # defaults, no upload), and putting the full record in the digest makes
+        # a policy read answerable and every cited rule value audit-backed.
+        evidence.append(EvidenceItem("policy_rules", ok=True, result=policy))
+        # Realized attribution needs only the ledger — a missing snapshot must
+        # not block it, so it sits outside the snapshot-gated portfolio batch.
+        if isinstance(trades, MissingData):
+            evidence.append(EvidenceItem("performance_summary", ok=False, missing=trades))
+        else:
+            evidence.append(
+                EvidenceItem("performance_summary", ok=True, result=performance_summary(trades))
+            )
+        if scope.tickers:
             evidence += _history_prefetch(trades, scope.tickers)
-        if run_desk:
-            desk_query = query if "desk_question" in intents else BRIEFING_QUERY
-            evidence += _desk_prefetch(context.retriever, desk_query, user_id)
+        elif "trade_history" in intents:
+            evidence.append(
+                EvidenceItem(
+                    "get_trades", ok=False, note="No ticker named; ask which position."
+                )
+            )
 
-        return {"evidence": evidence, "missing": _dedupe_missing(evidence)}
+        return {"evidence": evidence, "missing": _relevant_missing(evidence, intents)}
 
     return prefetch_node
 
@@ -90,7 +117,8 @@ def _portfolio_prefetch(
     positions: list[Position] | MissingData,
     trades: list[Trade] | MissingData,
     nav: float | None,
-    options_limit: float,
+    policy,
+    entry_fallback: dict,
 ) -> list[EvidenceItem]:
     if isinstance(positions, MissingData):
         # Every portfolio tool needs the snapshot; block them all on it.
@@ -101,7 +129,17 @@ def _portfolio_prefetch(
 
     items = [
         EvidenceItem("list_positions", ok=True, result=tuple(positions)),
-        _wrap("check_exposure", check_exposure(positions, nav, options_limit)),
+        _wrap(
+            "check_exposure",
+            check_exposure(
+                positions,
+                nav,
+                policy.options_limit,
+                hedge_low=policy.hedge_ratio_low,
+                hedge_high=policy.hedge_ratio_high,
+                position_cap=policy.existing_holding_cap,
+            ),
+        ),
     ]
     if isinstance(trades, MissingData):
         items += [
@@ -110,8 +148,17 @@ def _portfolio_prefetch(
         ]
     else:
         items += [
-            _wrap("scan_scaleout", scan_scaleout(positions, trades)),
-            _wrap("open_position_pnl", open_position_pnl(positions, trades)),
+            _wrap(
+                "scan_scaleout",
+                scan_scaleout(
+                    positions,
+                    trades,
+                    entry_fallback,
+                    first_gain=policy.scale_out_first,
+                    second_gain=policy.scale_out_second,
+                ),
+            ),
+            _wrap("open_position_pnl", open_position_pnl(positions, trades, entry_fallback)),
         ]
     return items
 
@@ -121,41 +168,11 @@ def _history_prefetch(
 ) -> list[EvidenceItem]:
     if isinstance(trades, MissingData):
         return [EvidenceItem("get_trades", ok=False, missing=trades)]
-    if not tickers:
-        return [
-            EvidenceItem(
-                "get_trades", ok=False, note="No ticker named; ask which position."
-            )
-        ]
     # Default = current active campaign per ticker (full history is an intake flag).
     return [
         EvidenceItem(f"get_trades:{ticker}", ok=True, result=tuple(get_trades(trades, ticker)))
         for ticker in tickers
     ]
-
-
-def _desk_prefetch(retriever, query: str, user_id: str) -> list[EvidenceItem]:
-    if retriever is None:
-        return [
-            EvidenceItem(
-                "search_desk_reviews", ok=False, note="Desk-review retriever not configured."
-            )
-        ]
-    docs = retriever.retrieve(query, user_id=user_id, k=5)
-    if not docs:
-        # The corpus is the two always-relevant reviews, so an empty hit for this
-        # user means none were uploaded — a cold-start miss, not "no opinion".
-        return [
-            EvidenceItem(
-                "search_desk_reviews",
-                ok=False,
-                missing=MissingData(
-                    "desk reviews",
-                    "Upload your latest daily and weekly desk review PDFs.",
-                ),
-            )
-        ]
-    return [EvidenceItem("search_desk_reviews", ok=True, result=tuple(docs))]
 
 
 # -- helpers --------------------------------------------------------------
@@ -171,9 +188,19 @@ def _wrap(tool: str, result) -> EvidenceItem:
     return EvidenceItem(tool=tool, ok=True, result=result)
 
 
-def _dedupe_missing(evidence: Sequence[EvidenceItem]) -> list[MissingData]:
+def _relevant_missing(
+    evidence: Sequence[EvidenceItem], intents: set[str]
+) -> list[MissingData]:
+    """Deduped missing stores, narrowed to the ones this question needs.
+
+    The evidence table keeps every blocked tool (cold-start truth); this only
+    scopes which "upload X" asks reach the user.
+    """
+    needed: set[str] = set()
+    for intent in intents:
+        needed |= _STORES_BY_INTENT.get(intent, frozenset())
     seen: dict[str, MissingData] = {}
     for item in evidence:
-        if item.missing is not None:
+        if item.missing is not None and item.missing.store in needed:
             seen.setdefault(item.missing.store, item.missing)
     return list(seen.values())
