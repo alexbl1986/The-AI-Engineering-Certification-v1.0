@@ -29,3 +29,23 @@ number, full trade history) and the desk's paid research PDFs. Policy, by class:
 Rationale: a push to a public repo is irreversible, and an ungated deployment holding a
 real book is a larger leak than the repo could ever be. Synthetic fixtures beat excerpts
 because excerpting paid research is still redistribution.
+
+## Amendment (2026-07-15): anonymized statement, coat-check identity
+
+The trader anonymized the IBKR YTD statement (identity fields removed, raw numbers only)
+and approved its use in the prototype, which dissolves the premise behind item 4: the
+deployed endpoint no longer holds data worth a credential gate. For the cert submission:
+
+- **The anonymized statement and the desk-review PDFs are baked into the deployment**
+  and shared by every user (`SharedCorpusRetriever` serves one corpus to all callers).
+  Item 1's "never committed" applies to the *identified* statement; the anonymized
+  version may ship with the prototype.
+- **Login is identification, not authentication** (a coat-check ticket): any username,
+  no password. A username owns its threads (LangGraph thread metadata `owner`) and its
+  policy record; returning usernames resume their latest thread, "New chat" mints
+  another. Isolation is therefore *demonstrated* (per-user policy + conversations over
+  shared read-only data), not *enforced* — anyone can present any name, and that is an
+  accepted, stated property of the prototype.
+- **Credential auth (item 4 as originally written) moves to Demo Day hardening**, where
+  per-user uploads and per-user corpora return and the graph's per-call user binding
+  (already in place) gets a verified identity behind it.

@@ -2,8 +2,11 @@
 
 Factories, not module-level tools — the retriever, quote fn, and Tavily client
 are injected seams (house style, cf. `quotes.fetch`), so tests run on fakes and
-`dev.py` wires the real network. All tools return STRINGS that land on the
-thread and in the audit grounding:
+`dev.py` wires the real network. Tools that read per-user stores declare
+`user_id` as an `InjectedToolArg`: excluded from the schema the model sees (a
+model must never pick a tenant), supplied by the tools node at call time from
+graph state — the compiled graph serves every user with one roster. All tools
+return STRINGS that land on the thread and in the audit grounding:
 
   * `search_desk_reviews` returns every retrieved chunk IN FULL — chunk size
     is bounded at ingest, so there is no second truncation here — each under
@@ -25,12 +28,12 @@ thread and in the audit grounding:
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, Literal, Sequence
+from typing import Annotated, Any, Callable, Literal, Sequence
 
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
-from langchain_core.tools import BaseTool, tool
+from langchain_core.tools import BaseTool, InjectedToolArg, tool
 
 from app.trading.domain import MissingData, Quote
 from app.trading.exposure import check_exposure
@@ -82,20 +85,24 @@ class DeskReviewRetriever(BaseRetriever):
 
 
 def make_desk_search_tool(
-    retriever, *, user_id: str, load_positions: Callable[[str], object] | None = None
+    retriever, *, load_positions: Callable[[str], object] | None = None
 ) -> BaseTool:
     """`retriever` is a `HybridRetriever` (or any fake with the same
     `.retrieve(query, user_id=..., k=...)` shape). `load_positions` is the
-    pre-fetch's own seam, reused so the footer can cross-reference the book."""
-    adapter = DeskReviewRetriever(hybrid=retriever, user_id=user_id)
+    pre-fetch's own seam, reused so the footer can cross-reference the book.
+    `user_id` arrives injected per call; the adapter is rebuilt around it so
+    the LangSmith retriever run still carries the right tenant."""
 
     @tool
-    def search_desk_reviews(query: str) -> str:
+    def search_desk_reviews(
+        query: str, user_id: Annotated[str, InjectedToolArg]
+    ) -> str:
         """Search the trader's uploaded desk reviews (Hebrew daily/weekly PDFs)
         for market outlook, sector views, risks, and specific names. Returns the
         matching review chunks in full, each under a [Source N: ...] metadata
         header; held book names mentioned in the results are listed at the
         end."""
+        adapter = DeskReviewRetriever(hybrid=retriever, user_id=user_id)
         docs = adapter.invoke(query)
         if not docs:
             return NO_REVIEWS_SENTINEL
@@ -157,7 +164,6 @@ def _money(value: float) -> str:
 
 def make_size_signal_tool(
     *,
-    user_id: str,
     load_nav: Callable[[str], float | None],
     load_policy: Callable[[str], object],
     load_positions: Callable[[str], object] | None = None,
@@ -165,7 +171,8 @@ def make_size_signal_tool(
     """Deterministic sizing for a pasted trade signal. The LLM's only job is
     parsing the shorthand into the tool's typed args; every figure in the
     output is computed here from NAV and the live policy record, so the audit
-    backs it. Loaders are the pre-fetch's own seams, reused."""
+    backs it. Loaders are the pre-fetch's own seams, reused; `user_id` arrives
+    injected per call."""
 
     @tool
     def size_trade_signal(
@@ -173,6 +180,8 @@ def make_size_signal_tool(
         kind: Literal["option", "stock"],
         unit_price: float,
         detail: str = "",
+        *,
+        user_id: Annotated[str, InjectedToolArg],
     ) -> str:
         """Size a NEW entry for a pasted trade signal using the trader's own
         per-entry sizing rules (read from his live policy record). `unit_price`
@@ -210,7 +219,7 @@ def make_size_signal_tool(
                 f"- {_money(sizing.unit_cost)} per {unit} → "
                 f"{sizing.quantity} {unit}s for {_money(sizing.cost)}"
             )
-        lines += _book_cross_checks(ticker, kind, nav, policy, sizing)
+        lines += _book_cross_checks(user_id, ticker, kind, nav, policy, sizing)
         lines.append(
             "NOT CHECKED (manual): contract existence/liquidity on the chain, "
             "IV rank (the spread rule), DTE exit plan, desk view on the name "
@@ -218,7 +227,7 @@ def make_size_signal_tool(
         )
         return "\n".join(lines)
 
-    def _book_cross_checks(ticker, kind, nav, policy, sizing) -> list[str]:
+    def _book_cross_checks(user_id, ticker, kind, nav, policy, sizing) -> list[str]:
         """Inventory + options-cap headroom, from the same snapshot the
         exposure check reads; a missing book is named, never silently skipped."""
         if load_positions is None:

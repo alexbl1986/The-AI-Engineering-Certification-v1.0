@@ -101,19 +101,22 @@ def _sizing_tool(nav=100_000.0, positions=None):
     from app.graphs.trading_assistant.tools import make_size_signal_tool
 
     return make_size_signal_tool(
-        user_id="u1",
         load_nav=lambda u: nav,
         load_policy=lambda u: DEFAULT_POLICY,
         load_positions=(lambda u: positions) if positions is not None else None,
     )
 
 
+def _size(tool, **args):
+    """Invoke the sizing tool the way the tools node does: `user_id` injected
+    alongside the model-parsed args (it is not in the model-facing schema)."""
+    return tool.invoke({"user_id": "u1", **args})
+
+
 def test_size_tool_sizes_an_option_signal_from_policy():
     tool = _sizing_tool(positions=[_stock("GOOGL", 10_797.0)])
-    out = tool.invoke({
-        "ticker": "AAOI", "kind": "option", "unit_price": 3.10,
-        "detail": "150 NEXT WEEK",
-    })
+    out = _size(tool, ticker="AAOI", kind="option", unit_price=3.10,
+                detail="150 NEXT WEEK")
     assert "1.0% of NAV" in out                # the rule applied, from the record
     assert "$1,000" in out                     # the budget
     assert "3 contracts for $930" in out       # code-computed, audit-backed
@@ -124,7 +127,7 @@ def test_size_tool_sizes_an_option_signal_from_policy():
 
 def test_size_tool_flags_a_name_already_in_the_book():
     tool = _sizing_tool(positions=[_stock("AAOI", 2_500.0)])
-    out = tool.invoke({"ticker": "AAOI", "kind": "option", "unit_price": 3.10})
+    out = _size(tool, ticker="AAOI", kind="option", unit_price=3.10)
     assert "ALREADY IN BOOK" in out
     assert "$2,500" in out
 
@@ -137,26 +140,24 @@ def test_size_tool_warns_when_the_entry_would_breach_the_options_cap():
         strike=100.0, expiry=date(2026, 8, 21), right="C",
     )
     tool = _sizing_tool(positions=[fat_call])
-    out = tool.invoke({"ticker": "AAOI", "kind": "option", "unit_price": 3.10})
+    out = _size(tool, ticker="AAOI", kind="option", unit_price=3.10)
     assert "BREACH" in out
     assert "$10,730" in out  # the after-entry exposure, computed in code
 
 
 def test_size_tool_stock_kind_uses_the_stock_rule():
-    out = _sizing_tool().invoke({"ticker": "PENG", "kind": "stock", "unit_price": 40.0})
+    out = _size(_sizing_tool(), ticker="PENG", kind="stock", unit_price=40.0)
     assert "3.0% of NAV" in out
     assert "75 shares for $3,000" in out
 
 
 def test_size_tool_reports_an_over_budget_premium():
-    out = _sizing_tool().invoke({"ticker": "SPY", "kind": "option", "unit_price": 15.0})
+    out = _size(_sizing_tool(), ticker="SPY", kind="option", unit_price=15.0)
     assert "OVER BUDGET" in out  # $1,500/contract vs a $1,000 budget: zero bought
 
 
 def test_size_tool_refuses_without_nav():
-    out = _sizing_tool(nav=None).invoke(
-        {"ticker": "AAOI", "kind": "option", "unit_price": 3.10}
-    )
+    out = _size(_sizing_tool(nav=None), ticker="AAOI", kind="option", unit_price=3.10)
     assert "NAV" in out and "statement" in out  # cold-start ask, not a zero-size
     assert "contracts" not in out
 
@@ -166,14 +167,13 @@ def test_size_tool_says_when_inventory_is_unchecked():
     from app.graphs.trading_assistant.tools import make_size_signal_tool
 
     tool = make_size_signal_tool(
-        user_id="u1",
         load_nav=lambda u: 100_000.0,
         load_policy=lambda u: DEFAULT_POLICY,
         load_positions=lambda u: MissingData(
             "positions snapshot", "Upload your tactical book export."
         ),
     )
-    out = tool.invoke({"ticker": "AAOI", "kind": "option", "unit_price": 3.10})
+    out = _size(tool, ticker="AAOI", kind="option", unit_price=3.10)
     assert "inventory not checked" in out  # sized anyway, blind spot named
 
 
@@ -183,9 +183,8 @@ def test_desk_tool_returns_every_chunk_in_full_with_source_headers():
     long_text = "סיכון QQQ ותנודתיות " * 120  # ~2,400 chars, far past any old cap
     tool = make_desk_search_tool(
         _FakeRetriever([_doc(long_text), _doc("שורה שנייה", section="hedges")]),
-        user_id="alex",
     )
-    out = tool.invoke({"query": "risks this week"})
+    out = tool.invoke({"query": "risks this week", "user_id": "alex"})
     assert long_text in out
     assert (
         "[Source 1: review.pdf, doc_type=weekly, review_date=2026-07-06, "
@@ -217,8 +216,8 @@ def test_desk_retriever_adapter_is_a_traceable_langchain_retriever():
 
 
 def test_desk_tool_empty_corpus_returns_upload_ask():
-    tool = make_desk_search_tool(_FakeRetriever([]), user_id="alex")
-    assert tool.invoke({"query": "anything"}) == NO_REVIEWS_SENTINEL
+    tool = make_desk_search_tool(_FakeRetriever([]))
+    assert tool.invoke({"query": "anything", "user_id": "alex"}) == NO_REVIEWS_SENTINEL
     assert "upload" in NO_REVIEWS_SENTINEL.lower()
 
 
@@ -227,20 +226,53 @@ def test_desk_tool_footers_held_names_mentioned_in_results():
     positions = [_stock("NVDA", 6819.05), _stock("GLW", 2558.27),
                  _stock("VD", 100.0)]  # "VD" is inside "NVDA": must NOT match
     tool = make_desk_search_tool(
-        _FakeRetriever([doc]), user_id="alex", load_positions=lambda u: positions
+        _FakeRetriever([doc]), load_positions=lambda u: positions
     )
-    out = tool.invoke({"query": "risks"})
+    out = tool.invoke({"query": "risks", "user_id": "alex"})
     assert "HELD NAMES MENTIONED IN THESE REVIEWS: NVDA ($6,819 held)" in out
     assert "GLW" not in out  # held but not mentioned
     assert "VD ($" not in out  # substring of NVDA, not a word-boundary hit
 
 
+# --- per-call user binding (deploy contract: one roster, every tenant) ------
+
+
+def test_user_id_is_injected_never_model_visible():
+    # The model's tool schema must not offer a tenant to pick; invocation
+    # without an injected user_id must fail loud, never default silently.
+    import pytest
+    from pydantic import ValidationError
+
+    for tool in (_sizing_tool(), make_desk_search_tool(_FakeRetriever([]))):
+        assert "user_id" not in tool.args  # hidden from the bound model
+        assert "user_id" in tool.args_schema.model_fields  # required at invoke
+    with pytest.raises(ValidationError):
+        make_desk_search_tool(_FakeRetriever([])).invoke({"query": "q"})
+
+
+def test_tools_node_injects_the_callers_user_id():
+    from app.graphs.trading_assistant.answer import make_tools_node
+
+    retriever = _FakeRetriever([_doc("chunk")])
+    ctx = AgentContext(
+        chat_model=None,
+        agent_tools=[make_desk_search_tool(retriever)],
+        default_user_id="fallback",
+    )
+    node = make_tools_node(ctx)
+    call = _tool_call_msg(name="search_desk_reviews", args={"query": "q"})
+
+    node({"messages": [call], "user_id": "u42"})   # authenticated turn
+    node({"messages": [call]})                     # no identity in state
+    assert [uid for _, uid, _ in retriever.calls] == ["u42", "fallback"]
+
+
 def test_desk_tool_footer_skips_missing_positions():
     tool = make_desk_search_tool(
-        _FakeRetriever([_doc("NVDA looks crowded")]), user_id="alex",
+        _FakeRetriever([_doc("NVDA looks crowded")]),
         load_positions=lambda u: MissingData("positions snapshot", "Upload it."),
     )
-    assert "HELD NAMES" not in tool.invoke({"query": "risks"})
+    assert "HELD NAMES" not in tool.invoke({"query": "risks", "user_id": "alex"})
 
 
 # --- scripted stubs ---------------------------------------------------------

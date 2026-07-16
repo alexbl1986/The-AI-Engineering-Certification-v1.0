@@ -2,7 +2,7 @@
 
 Parses the Trades section of the IBKR YTD Activity Statement into typed Trade
 records. Header lines are verbatim from the real export; data rows are
-synthetic (real fills live only in gitignored data/private/).
+synthetic (the anonymized real statement lives in data/book/).
 """
 
 from datetime import date, datetime
@@ -17,7 +17,7 @@ from app.trading.ingest.statement import (
 )
 from app.trading.domain import Split, Trade
 
-REAL_FILE = Path(__file__).parent.parent / "data" / "private" / "IBKR YTD Statement.csv"
+REAL_FILE = Path(__file__).parent.parent / "data" / "book" / "IBKR YTD Statement.csv"
 
 # Verbatim Trades header from the real statement.
 TRADES_HEADER = (

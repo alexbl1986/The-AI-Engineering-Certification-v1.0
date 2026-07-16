@@ -10,7 +10,7 @@ import pytest
 from app.trading.ingest.statement import parse_activity_statement
 from app.trading.ledger import group_campaigns
 
-REAL_FILE = Path(__file__).parent.parent / "data" / "private" / "IBKR YTD Statement.csv"
+REAL_FILE = Path(__file__).parent.parent / "data" / "book" / "IBKR YTD Statement.csv"
 
 
 @pytest.mark.skipif(not REAL_FILE.exists(), reason="real (gitignored) statement not present")

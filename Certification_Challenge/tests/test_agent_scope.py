@@ -6,6 +6,7 @@ scoper's job is only to turn a message into a `Scope`; it must not answer.
 """
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import tool
 
 from app.graphs.trading_assistant.deps import AgentContext
 from app.graphs.trading_assistant.scope import make_scope_node
@@ -126,6 +127,37 @@ def test_second_clarify_round_is_forced_to_proceed():
     assert result["pending_clarification"] is False
     assert any("assum" in a.lower() for a in result["scope"].assumptions)
     assert "messages" not in result  # proceeds into the graph, no second question
+
+
+def test_capabilities_question_is_answered_from_the_live_roster():
+    # Observed failure: "you are exposed to tavily web search tool" hit the
+    # off_topic refusal, and the agent's earlier tool-list answer was a guess.
+    # The reply must come from the ACTUAL roster, in code.
+    @tool
+    def search_web(query: str) -> str:
+        """Search the live web."""
+        return ""
+
+    node = make_scope_node(
+        AgentContext(
+            chat_model=StubModel(Scope(intents=["capabilities"])),
+            agent_tools=[search_web],
+        )
+    )
+    result = node({"messages": [HumanMessage(content="do you have web search?")]})
+    (reply,) = result["messages"]
+    assert "search_web" in reply.content
+
+
+def test_capabilities_without_tools_says_so_instead_of_listing_nothing():
+    result = _run(Scope(intents=["capabilities"]), text="what tools do you have?")
+    (reply,) = result["messages"]
+    assert "No live tools" in reply.content
+
+
+def test_capabilities_mixed_with_real_route_proceeds_without_short_circuit():
+    result = _run(Scope(intents=["capabilities", "status_check"]))
+    assert "messages" not in result
 
 
 def test_scoper_sees_system_prompt_and_user_message():

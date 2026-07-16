@@ -180,7 +180,7 @@ def test_briefing_run_grounds_full_desk_text_and_held_names():
     long_text = ("הדסק רואה סיכון של 25% לתיקון בשמות הצפופים NVDA QQQ SMH " * 30).strip()
     retriever = _FakeRetriever([_doc(long_text)])
     desk_tool = make_desk_search_tool(
-        retriever, user_id="alex", load_positions=lambda u: [_position()]
+        retriever, load_positions=lambda u: [_position()]
     )
     stub = _BriefingStub(
         Scope(intents=["daily_briefing"]),

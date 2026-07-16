@@ -2,7 +2,7 @@
 
 Parses the IBKR tactical book export (flat Flex table) into typed Position
 records. Header line is verbatim from the real export; data rows are
-synthetic (real holdings live only in gitignored data/private/).
+synthetic (the anonymized real book lives in data/book/).
 """
 
 from datetime import date
@@ -13,7 +13,7 @@ import pytest
 from app.trading.ingest.tactical import parse_tactical_book
 from app.trading.domain import Position
 
-REAL_FILE = Path(__file__).parent.parent / "data" / "private" / "Tactical_Boot.csv"
+REAL_FILE = Path(__file__).parent.parent / "data" / "book" / "Tactical_Boot.csv"
 
 HEADER = (
     '"Symbol","CurrencyPrimary","FXRateToBase","AssetClass","Strike","Expiry",'

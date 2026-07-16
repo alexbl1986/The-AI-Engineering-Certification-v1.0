@@ -132,3 +132,24 @@ def test_end_to_end_on_real_daily_review(query, needle):
     assert results
     assert all("-c" in r.id for r in results)  # chunk ids, traceable to preview
     assert any(needle in r.text for r in results)
+
+
+def test_shared_corpus_retriever_serves_one_owner_to_every_caller():
+    # Cert-prototype mode (ADR-0005 amendment): the baked-in reviews are shared,
+    # so retrieval reads the shared owner's corpus no matter who is asking —
+    # while callers keep passing their own user_id (the tools' binding intact).
+    from app.rag.retrieve import SharedCorpusRetriever
+
+    class _Recorder:
+        def __init__(self):
+            self.owners = []
+
+        def retrieve(self, query, *, user_id, k=5):
+            self.owners.append(user_id)
+            return []
+
+    inner = _Recorder()
+    shared = SharedCorpusRetriever(inner, owner="baked-desk")
+    shared.retrieve("palladium", user_id="alice")
+    shared.retrieve("palladium", user_id="bob", k=3)
+    assert inner.owners == ["baked-desk", "baked-desk"]

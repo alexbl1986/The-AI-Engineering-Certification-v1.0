@@ -6,10 +6,10 @@
   * retriever   -> real OpenAI `text-embedding-3-large` over the committed desk
                    reviews in `data/reviews/`, in an in-memory Qdrant (no cloud
                    provisioning needed to iterate locally);
-  * portfolio   -> the trader's local, gitignored CSVs in `data/private/` parsed
+  * portfolio   -> the trader's anonymized book CSVs in `data/book/` parsed
                    into positions / trades / NAV, seeded under one dev user.
 
-Everything degrades: if the embeddings/PDFs or the private CSVs are absent (a
+Everything degrades: if the embeddings/PDFs or the book CSVs are absent (a
 fresh clone, no network), the corresponding loader returns `MissingData` and the
 graph still starts — you can drive the scoper and see the cold-start path. The
 pytest layer builds its own context with fakes, so importing this module (and its
@@ -36,7 +36,7 @@ from app.graphs.trading_assistant.tools import (
 )
 from app.rag.chunk import chunk_document
 from app.rag.index import OPENAI_3_LARGE_DIM, CorpusIndex, openai_embedder
-from app.rag.retrieve import HybridRetriever
+from app.rag.retrieve import HybridRetriever, SharedCorpusRetriever
 from app.trading.domain import MissingData
 from app.trading.ingest.statement import (
     parse_account_nav,
@@ -53,15 +53,15 @@ load_dotenv()
 GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/v1"
 GATEWAY_MODEL = "openai/gpt-5.4-mini"  # verified live via the OpenAI-compat endpoint
 
-# Seeded from the trader's real (gitignored) data, so the demo is coherent with
+# Seeded from the trader's anonymized book data, so the demo is coherent with
 # the committed reviews. "alex-demo" stays reserved for synthetic isolation tests.
 DEV_USER = "real-user"
 
 _ROOT = Path(__file__).resolve().parents[3]  # .../Certification_Challenge
 _REVIEWS = _ROOT / "data" / "reviews"
-_PRIVATE = _ROOT / "data" / "private"
-_TACTICAL_CSV = _PRIVATE / "Tactical_Boot.csv"
-_STATEMENT_CSV = _PRIVATE / "IBKR YTD Statement.csv"
+_BOOK = _ROOT / "data" / "book"
+_TACTICAL_CSV = _BOOK / "Tactical_Boot.csv"
+_STATEMENT_CSV = _BOOK / "IBKR YTD Statement.csv"
 
 
 def gateway_chat_model() -> ChatOpenAI:
@@ -70,6 +70,11 @@ def gateway_chat_model() -> ChatOpenAI:
         base_url=GATEWAY_BASE_URL,
         api_key=os.environ["AI_GATEWAY_API_KEY"],
         temperature=0,  # a router wants stable routing (gateway accepts it for this slug)
+        # No LLM call in this graph is user-facing (delivery is audit-gated;
+        # visible messages are constructed in code), so keep every model run
+        # out of the client's `messages` stream — otherwise the scoper's JSON
+        # and the unaudited draft leak into the chat UI as extra bubbles.
+        tags=["nostream"],
     )
 
 
@@ -90,7 +95,10 @@ def _build_retriever(user_id: str) -> HybridRetriever | None:
         )
         for pdf in pdfs:
             index.replace_document(chunk_document(str(pdf)), user_id=user_id)
-        return HybridRetriever(index)
+        # Cert-prototype mode: the committed reviews are baked in for every
+        # username (coat-check identity, ADR-0005 amendment) — retrieval always
+        # reads this one corpus regardless of the injected caller user_id.
+        return SharedCorpusRetriever(HybridRetriever(index), owner=user_id)
     except Exception as exc:  # noqa: BLE001 - dev convenience: start even offline
         print(f"[dev] retriever unavailable ({exc!r}); desk questions will cold-start")
         return None
@@ -140,7 +148,6 @@ def _build_agent_tools(retriever, positions_loader, nav_loader, policy_loader):
     tools = [
         make_market_quote_tool(),
         make_size_signal_tool(
-            user_id=DEV_USER,
             load_nav=nav_loader,
             load_policy=policy_loader,
             load_positions=positions_loader,
@@ -148,9 +155,7 @@ def _build_agent_tools(retriever, positions_loader, nav_loader, policy_loader):
     ]
     if retriever is not None:
         tools.append(
-            make_desk_search_tool(
-                retriever, user_id=DEV_USER, load_positions=positions_loader
-            )
+            make_desk_search_tool(retriever, load_positions=positions_loader)
         )
     if os.environ.get("TAVILY_API_KEY"):
         try:

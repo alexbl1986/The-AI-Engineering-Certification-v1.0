@@ -23,8 +23,9 @@ from pydantic import BaseModel, Field
 from app.graphs.trading_assistant.policy_model import PolicyRecord, ProposedPolicyChange
 from app.trading.domain import MissingData
 
-# The 10 routes (ADR-0006 + the two ADR-0007 transcript routes: daily_briefing,
-# trade_signal_eval). Multi-label: the scoper may return several.
+# The 11 routes (ADR-0006 + the two ADR-0007 transcript routes: daily_briefing,
+# trade_signal_eval; capabilities added after meta-questions about the assistant
+# itself hit the off_topic refusal). Multi-label: the scoper may return several.
 Intent = Literal[
     "status_check",        # "am I within policy / exposure?" -> exposure + scaleout + pnl
     "rebalance_advice",    # "what should I change?" -> full reconcile
@@ -35,6 +36,7 @@ Intent = Literal[
     "market_regime",       # live macro/index read -> quotes + Tavily (no uploads needed)
     "trade_signal_eval",   # pasted shorthand "AAOI 150 NEXT WEEK 3.1" -> TradePlan
     "daily_briefing",      # "morning briefing" -> composition of the fetches
+    "capabilities",        # about the assistant itself (tools, "why didn't you…") -> roster reply
     "off_topic",           # not about this book/desk/rules -> refuse
 ]
 

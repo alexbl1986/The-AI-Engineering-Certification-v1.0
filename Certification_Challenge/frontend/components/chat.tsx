@@ -57,8 +57,16 @@ function toolIcon(name?: string) {
   return <Wrench className="size-4" />;
 }
 
-export function Chat({ assistantId }: { assistantId: string }) {
-  const stream = useStream({ apiUrl: API_URL, assistantId });
+export function Chat({
+  assistantId,
+  threadId,
+  userId,
+}: {
+  assistantId: string;
+  threadId: string;
+  userId: string;
+}) {
+  const stream = useStream({ apiUrl: API_URL, assistantId, threadId });
   const { messages, isLoading, error, interrupt } = stream;
 
   const [input, setInput] = useState("");
@@ -66,7 +74,9 @@ export function Chat({ assistantId }: { assistantId: string }) {
   const send = (text: string) => {
     const content = text.trim();
     if (!content || isLoading || interrupt != null) return;
-    stream.submit({ messages: [{ type: "human", content }] });
+    // user_id is the coat-check identity: it keys the policy record and the
+    // per-user seams in the graph (client-declared by design, ADR-0005 amendment).
+    stream.submit({ messages: [{ type: "human", content }], user_id: userId });
     setInput("");
   };
 

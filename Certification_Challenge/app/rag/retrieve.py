@@ -95,6 +95,22 @@ class HybridRetriever:
         )
 
 
+class SharedCorpusRetriever:
+    """Serve ONE owner's corpus to every caller.
+
+    The cert prototype bakes the desk reviews in for all users (ADR-0005
+    amendment): callers keep passing their own ``user_id`` — the tools' per-call
+    user binding stays intact for Demo Day's per-user corpora — but retrieval
+    here always reads the shared owner's documents."""
+
+    def __init__(self, inner, *, owner: str) -> None:
+        self._inner = inner
+        self._owner = owner
+
+    def retrieve(self, query: str, *, user_id: str, k: int = 5) -> list[RetrievedDoc]:
+        return self._inner.retrieve(query, user_id=self._owner, k=k)
+
+
 def _from_hit(hit: SearchHit) -> RetrievedDoc:
     return RetrievedDoc(
         id=hit.chunk_id,

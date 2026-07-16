@@ -2,7 +2,7 @@
 from its first line (ADR-0002 sniffing router).
 
 Fixtures: header lines are copied verbatim from the real IBKR exports
-(data/private/, gitignored); data rows are synthetic.
+(data/book/, committed anonymized); data rows are synthetic.
 """
 
 from app.trading.ingest.csv_router import CsvKind, sniff_csv_format

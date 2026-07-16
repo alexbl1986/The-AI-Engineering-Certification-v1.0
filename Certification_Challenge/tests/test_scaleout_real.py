@@ -12,7 +12,7 @@ from app.trading.ingest.statement import parse_activity_statement
 from app.trading.ingest.tactical import parse_tactical_book
 from app.trading.scaleout import scan_scaleout
 
-DATA = Path(__file__).parent.parent / "data" / "private"
+DATA = Path(__file__).parent.parent / "data" / "book"
 BOOK = DATA / "Tactical_Boot.csv"
 STMT = DATA / "IBKR YTD Statement.csv"
 

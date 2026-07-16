@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Callable, Sequence
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
+from langchain_core.tools import BaseTool
 
 from app.graphs.trading_assistant.deps import AgentContext
 from app.graphs.trading_assistant.state import AgentState, Scope
@@ -30,10 +31,14 @@ Routes (choose ALL that apply — a single message can need several):
 - policy_change: a request to CHANGE a rule/threshold to a stated new value (e.g. "raise
   my options cap to 12%"). Asking what the rules ARE ("what's my current policy?") is a
   status_check read, never policy_change.
-- market_regime: live macro / index read (needs no uploaded data).
+- market_regime: a live market read — macro, indices, or news/context on a name or
+  theme, including explicit asks to search the web or check quotes (needs no uploaded data).
 - trade_signal_eval: a pasted trade shorthand like "AAOI 150 NEXT WEEK 3.1".
 - daily_briefing: "morning briefing" / "start my day" — the full composed rundown.
-- off_topic: anything not about this book, this desk's reviews, or these rules — refuse.
+- capabilities: about the assistant itself — what it can and cannot do, which tools it
+  has, or why it did / didn't do something on a previous turn.
+- off_topic: anything else — not this book, the desk's reviews, these rules, live
+  markets, or the assistant itself — refuse.
 
 Extraction:
 - tickers: uppercase symbols named or clearly implied.
@@ -54,6 +59,12 @@ OFF_TOPIC_REFUSAL = (
     "I'm your trading-desk assistant — I can help with your book, your exposure and "
     "hedging rules, your desk's daily/weekly reviews, and trade-signal checks, but that "
     "one's outside what I do."
+)
+
+CAPABILITIES_INTRO = (
+    "I'm your trading-desk assistant. I can reconcile your book against your exposure "
+    "and hedging rules, search your desk's daily/weekly reviews, size a pasted trade "
+    "signal, review realized performance, and compose your morning briefing."
 )
 
 # Emitted when the model wants to clarify but returned no question — a silent
@@ -105,6 +116,19 @@ def _scoper_view(messages: Sequence[AnyMessage]) -> list[AnyMessage]:
     ]
 
 
+def _capabilities_reply(tools: Sequence[BaseTool] | None) -> str:
+    """Deterministic answer about the assistant itself, built from the ACTUAL
+    roster — it can never claim (or deny) a tool this session doesn't have."""
+    if not tools:
+        return CAPABILITIES_INTRO + (
+            "\n\nNo live tools are wired this session — I answer from uploaded data alone."
+        )
+    listed = "\n".join(
+        f"- `{t.name}` — {(t.description or '').strip().splitlines()[0]}" for t in tools
+    )
+    return f"{CAPABILITIES_INTRO}\n\nLive tools this session:\n{listed}"
+
+
 def make_scope_node(context: AgentContext) -> Callable[[AgentState], dict]:
     """Bind the scoper to its chat model; returns the LangGraph node callable."""
     model = context.chat_model.with_structured_output(Scope)
@@ -139,6 +163,8 @@ def make_scope_node(context: AgentContext) -> Callable[[AgentState], dict]:
                 AIMessage(content=scope.clarifying_question or DEFAULT_CLARIFY_QUESTION)
             ]
             update["pending_clarification"] = True
+        elif "capabilities" in scope.intents and set(scope.intents) <= {"capabilities", "off_topic"}:
+            update["messages"] = [AIMessage(content=_capabilities_reply(context.agent_tools))]
         elif set(scope.intents) <= {"off_topic"}:
             update["messages"] = [AIMessage(content=OFF_TOPIC_REFUSAL)]
         return update

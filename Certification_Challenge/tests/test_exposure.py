@@ -15,7 +15,7 @@ from app.trading.exposure import check_exposure
 from app.trading.ingest.statement import parse_account_nav
 from app.trading.ingest.tactical import parse_tactical_book
 
-DATA = Path(__file__).parent.parent / "data" / "private"
+DATA = Path(__file__).parent.parent / "data" / "book"
 BOOK = DATA / "Tactical_Boot.csv"
 STMT = DATA / "IBKR YTD Statement.csv"
 

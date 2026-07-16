@@ -20,7 +20,7 @@ from app.trading.ingest.statement import (
 from app.trading.ingest.tactical import parse_tactical_book
 from app.trading.pnl import open_position_pnl
 
-DATA = Path(__file__).parent.parent / "data" / "private"
+DATA = Path(__file__).parent.parent / "data" / "book"
 BOOK = DATA / "Tactical_Boot.csv"
 STMT = DATA / "IBKR YTD Statement.csv"
 

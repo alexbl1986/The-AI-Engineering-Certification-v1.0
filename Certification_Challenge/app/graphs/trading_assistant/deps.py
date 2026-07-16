@@ -5,6 +5,12 @@ One graph, three wirings of the SAME `AgentContext`:
   * `langgraph dev` / Studio -> the real gateway `ChatOpenAI` + seeded local data;
   * deploy -> gateway model + Postgres/Qdrant-backed loaders.
 
+Real wirings must build the chat model with `tags=["nostream"]`: no LLM call in
+this graph is user-facing (delivery is audit-gated; visible messages are
+constructed in code), so any streamed model tokens leak scoper JSON / unaudited
+drafts into the client's `messages` stream as extra chat bubbles. `dev.py` does
+this; the deploy wiring must too.
+
 Per-user DATA (snapshot, ledger, policy) is loaded inside nodes keyed by
 `user_id`, not baked into this frozen context — the server compiles the graph
 once and serves every user. Those data-access callables land with the pre-fetch

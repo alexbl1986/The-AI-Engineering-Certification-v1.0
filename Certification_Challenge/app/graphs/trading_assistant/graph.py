@@ -36,6 +36,8 @@ def _route_after_scope(state: AgentState) -> str:
     scope = state["scope"]
     if scope.needs_clarification:
         return END  # the clarifying question was already emitted; wait for the reply
+    if "capabilities" in scope.intents and set(scope.intents) <= {"capabilities", "off_topic"}:
+        return END  # the scoper already answered from the live roster
     if set(scope.intents) <= {"off_topic"}:
         return END  # the scoper already emitted the refusal
     if "policy_change" in scope.intents:
